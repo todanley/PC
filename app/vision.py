@@ -19,6 +19,11 @@ except ImportError:
 
 # Anthropic limit is 5 MB per image. JPEG @ logical resolution stays well under.
 _MAX_BYTES = 4_500_000
+# Token cost on Anthropic vision is ~ (w*h)/750. Capping the long edge well below
+# the typical retina-logical resolution (e.g. 1728x1117 -> 1280x827) cuts vision
+# tokens by ~2x at quality the model can still read UI text from.
+_MAX_EDGE = int(os.environ.get("PHANTOM_MAX_EDGE", "1280"))
+_JPEG_QUALITY = int(os.environ.get("PHANTOM_JPEG_QUALITY", "75"))
 
 API_URL = "https://api.anthropic.com/v1/messages"
 MODEL = os.environ.get("PHANTOM_MODEL", "claude-opus-4-7")
@@ -69,38 +74,40 @@ class VisionClient:
             raise VisionError("ANTHROPIC_API_KEY not set")
         plat, primary_mod = _platform_strings()
         self.logical_w, self.logical_h = screen_size
+        # Downsample target: long edge capped at _MAX_EDGE for token cost.
+        self.scale = min(1.0, _MAX_EDGE / max(self.logical_w, self.logical_h))
+        self.image_w = max(1, round(self.logical_w * self.scale))
+        self.image_h = max(1, round(self.logical_h * self.scale))
         self.system = SYSTEM_PROMPT.format(
-            platform_name=plat, width=self.logical_w, height=self.logical_h, primary_mod=primary_mod
+            platform_name=plat, width=self.image_w, height=self.image_h, primary_mod=primary_mod
         )
         self.history = []  # list of {"role": ..., "content": ...}
 
     def _encode_image(self, screenshot_path: str) -> tuple[str, str]:
-        """Resize screenshot to logical resolution and encode as JPEG.
-        Returns (base64_data, media_type). Falls back to PNG if Pillow lacks JPEG."""
+        """Resize screenshot to the downsampled (image_w x image_h) target and
+        encode as JPEG. Returns (base64_data, media_type)."""
         img = Image.open(screenshot_path)
-        if img.size != (self.logical_w, self.logical_h):
-            img = img.resize((self.logical_w, self.logical_h), Image.LANCZOS)
-        # Try JPEG first (much smaller); progressively lower quality if oversize.
-        for quality in (90, 80, 70, 60, 50):
+        if img.size != (self.image_w, self.image_h):
+            img = img.resize((self.image_w, self.image_h), Image.LANCZOS)
+        rgb = img.convert("RGB")
+        for quality in (_JPEG_QUALITY, 65, 55, 45):
             buf = io.BytesIO()
-            rgb = img.convert("RGB")
             rgb.save(buf, format="JPEG", quality=quality, optimize=True)
             data = buf.getvalue()
             if len(data) <= _MAX_BYTES:
                 return base64.b64encode(data).decode("ascii"), "image/jpeg"
-        # Last resort: shrink dimensions further
-        scale = 0.75
-        while scale > 0.25:
-            w = int(self.logical_w * scale)
-            h = int(self.logical_h * scale)
+        # Last resort: shrink dimensions further (rare — only triggers for huge
+        # logical resolutions where even quality=45 at the cap is over 5MB).
+        s = 0.75
+        while s > 0.25:
+            w = max(1, int(self.image_w * s))
+            h = max(1, int(self.image_h * s))
             buf = io.BytesIO()
-            img.resize((w, h), Image.LANCZOS).convert("RGB").save(
-                buf, format="JPEG", quality=60, optimize=True
-            )
+            rgb.resize((w, h), Image.LANCZOS).save(buf, format="JPEG", quality=55, optimize=True)
             data = buf.getvalue()
             if len(data) <= _MAX_BYTES:
                 return base64.b64encode(data).decode("ascii"), "image/jpeg"
-            scale -= 0.15
+            s -= 0.15
         raise VisionError("could not compress screenshot under 5MB")
 
     def next_action(self, screenshot_path: str) -> dict:
@@ -153,6 +160,13 @@ class VisionClient:
             action = json.loads(m.group())
         except json.JSONDecodeError as e:
             raise VisionError(f"invalid JSON: {e} :: {m.group()[:200]}")
+
+        # Map x,y from the downsampled image space back to logical screen pixels.
+        if self.scale < 1.0:
+            inv = 1.0 / self.scale
+            for k in ("x", "y"):
+                if isinstance(action.get(k), (int, float)):
+                    action[k] = round(action[k] * inv)
 
         # Record into history WITHOUT the image, to keep token cost flat across long tasks
         self.history.append({
