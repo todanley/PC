@@ -48,6 +48,10 @@ Rules:
 - Coordinates are in the {width}x{height} pixel space shown in the screenshot. They will be clicked as-is.
 - Prefer ONE action per turn and verify in the next screenshot.
 - Use {primary_mod}+space (Spotlight) on macOS or the Windows key on Windows to launch apps.
+- IGNORE unrelated UI on screen — terminals, IDEs, code editors, log panels, other agent windows. Do NOT wait for their spinners ("Waddling…", "Bashing…", build progress, etc.). They are not part of the task; act on the app the task is about.
+- If the task names a specific app (e.g. 抖音 / Douyin), prefer launching the desktop app by its native name (type 抖音 in Spotlight, not "Douyin") so you don't end up on a website that requires login.
+- If a click on a list item or row didn't navigate, the row label/text or icon is the actual click target, not blank space inside the row.
+- TOGGLE BUTTONS (like/heart, follow/unfollow, save, mute): clicking again UNDOES the action. After you successfully like/follow/save something, NEVER click that same button again — your next action must move on (scroll, click a different element, or done). If unsure whether the click registered, scroll first to advance, not re-click.
 - When the task is complete, return {{"action":"done","reasoning":"<why>"}}.
 - If something is unexpected, return {{"action":"wait","reasoning":"<why>"}} and you'll get a fresh screenshot."""
 
@@ -110,14 +114,17 @@ class VisionClient:
             s -= 0.15
         raise VisionError("could not compress screenshot under 5MB")
 
-    def next_action(self, screenshot_path: str) -> dict:
+    def next_action(self, screenshot_path: str, feedback: str | None = None) -> dict:
         b64, media_type = self._encode_image(screenshot_path)
 
-        # User turn = task reminder + new screenshot. We keep history concise:
-        # only the textual JSON replies from the assistant; never re-send old screenshots.
-        user_text = (
-            f"Task: {self.task}\n\nWhat's the next single action? Return JSON only."
-        )
+        # User turn = task reminder + optional runner feedback + new screenshot.
+        # History keeps only text JSON replies; never re-send old screenshots.
+        parts = []
+        if feedback:
+            parts.append(feedback)
+        parts.append(f"Task: {self.task}")
+        parts.append("What's the next single action? Return JSON only.")
+        user_text = "\n\n".join(parts)
         new_user_msg = {
             "role": "user",
             "content": [
@@ -133,14 +140,17 @@ class VisionClient:
             "system": self.system,
             "messages": messages,
         }
+        headers = {
+            "anthropic-version": ANTHROPIC_VERSION,
+            "content-type": "application/json",
+        }
+        if self.api_key.startswith("sk-ant-oat"):
+            headers["Authorization"] = f"Bearer {self.api_key}"
+            headers["anthropic-beta"] = "oauth-2025-04-20"
+        else:
+            headers["x-api-key"] = self.api_key
         req = urllib.request.Request(
-            API_URL,
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "x-api-key": self.api_key,
-                "anthropic-version": ANTHROPIC_VERSION,
-                "content-type": "application/json",
-            },
+            API_URL, data=json.dumps(body).encode("utf-8"), headers=headers,
         )
         try:
             with urllib.request.urlopen(req, timeout=60, context=_SSL_CTX) as resp:
