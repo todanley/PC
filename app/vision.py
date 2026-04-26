@@ -32,6 +32,9 @@ ANTHROPIC_VERSION = "2023-06-01"
 SYSTEM_PROMPT = """You are an autonomous agent driving a {platform_name} computer to complete a task.
 
 Each turn you receive a fresh screenshot of the user's screen ({width}x{height} pixels — the same coordinate space the OS uses for clicks).
+
+CRITICAL: the screenshot is taken AFTER your previous action's effect has rendered. So if your previous action was "click the like heart", this screenshot already shows the heart filled red and the count incremented — your click succeeded. Do NOT repeat that action. Instead, BACKTRACK: recognize the prior action is done, and plan the NEXT step from this new state (e.g. scroll, pick the next item, or done). The same applies to any other action: if you typed text, this screenshot shows the text already typed; if you pressed a key, the navigation already happened; if you clicked a video thumbnail, the video is now loaded. Trust the screenshot — your prior action is already complete.
+
 Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 {{
@@ -51,7 +54,7 @@ Rules:
 - IGNORE unrelated UI on screen — terminals, IDEs, code editors, log panels, other agent windows. Do NOT wait for their spinners ("Waddling…", "Bashing…", build progress, etc.). They are not part of the task; act on the app the task is about.
 - If the task names a specific app (e.g. 抖音 / Douyin), prefer launching the desktop app by its native name (type 抖音 in Spotlight, not "Douyin") so you don't end up on a website that requires login.
 - If a click on a list item or row didn't navigate, the row label/text or icon is the actual click target, not blank space inside the row.
-- TOGGLE BUTTONS (like/heart, follow/unfollow, save, mute): clicking again UNDOES the action. After you successfully like/follow/save something, NEVER click that same button again — your next action must move on (scroll, click a different element, or done). If unsure whether the click registered, scroll first to advance, not re-click.
+- TOGGLE BUTTONS (like/heart, follow/unfollow, save, mute): clicking again UNDOES the action. After clicking a toggle, BACKTRACK (the prior action is done — see CRITICAL paragraph above) and your VERY NEXT action must move on (scroll, key, click a different element, or done). NEVER re-click the same toggle "to make sure" — that is guaranteed to undo it.
 - When the task is complete, return {{"action":"done","reasoning":"<why>"}}.
 - If something is unexpected, return {{"action":"wait","reasoning":"<why>"}} and you'll get a fresh screenshot."""
 
@@ -66,6 +69,31 @@ def _platform_strings():
 
 class VisionError(Exception):
     pass
+
+
+def _lenient_json_loads(raw: str) -> dict | None:
+    """Parse Claude's JSON, tolerating common formatter slips when the prompt
+    is in Chinese:
+      • smart/typographic quotes (“ ” ‘ ’) → ASCII (")
+      • single-quoted keys ('y': 1) → double-quoted ("y": 1)
+    Returns the parsed dict, or None if all repairs fail.
+    """
+    candidates = [raw]
+    # Repair 1: smart quotes → ASCII double.
+    a = (raw.replace("“", '"').replace("”", '"')
+            .replace("‘", "'").replace("’", "'"))
+    candidates.append(a)
+    # Repair 2: single-quoted JSON keys → double-quoted. Only matches keys that
+    # follow `{` or `,` and are plain identifiers; won't touch single quotes
+    # inside string values.
+    b = re.sub(r"([{,]\s*)'([A-Za-z_]\w*)'(\s*:)", r'\1"\2"\3', a)
+    candidates.append(b)
+    for c in candidates:
+        try:
+            return json.loads(c)
+        except json.JSONDecodeError:
+            continue
+    return None
 
 
 class VisionClient:
@@ -114,17 +142,14 @@ class VisionClient:
             s -= 0.15
         raise VisionError("could not compress screenshot under 5MB")
 
-    def next_action(self, screenshot_path: str, feedback: str | None = None) -> dict:
+    def next_action(self, screenshot_path: str) -> dict:
         b64, media_type = self._encode_image(screenshot_path)
 
-        # User turn = task reminder + optional runner feedback + new screenshot.
-        # History keeps only text JSON replies; never re-send old screenshots.
-        parts = []
-        if feedback:
-            parts.append(feedback)
-        parts.append(f"Task: {self.task}")
-        parts.append("What's the next single action? Return JSON only.")
-        user_text = "\n\n".join(parts)
+        # User turn = task reminder + new screenshot. History keeps only text
+        # JSON replies; never re-send old screenshots.
+        user_text = (
+            f"Task: {self.task}\n\nWhat's the next single action? Return JSON only."
+        )
         new_user_msg = {
             "role": "user",
             "content": [
@@ -166,10 +191,9 @@ class VisionClient:
         m = re.search(r"\{[\s\S]*\}", text)
         if not m:
             raise VisionError(f"no JSON in response: {text[:200]}")
-        try:
-            action = json.loads(m.group())
-        except json.JSONDecodeError as e:
-            raise VisionError(f"invalid JSON: {e} :: {m.group()[:200]}")
+        action = _lenient_json_loads(m.group())
+        if action is None:
+            raise VisionError(f"invalid JSON: {m.group()[:200]}")
 
         # Map x,y from the downsampled image space back to logical screen pixels.
         if self.scale < 1.0:
