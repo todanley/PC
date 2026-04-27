@@ -37,6 +37,15 @@ CRITICAL — screenshots are POST-action: this screenshot was taken AFTER your p
 
 PROGRESS — every reply MUST include a `progress` field with a one-line running checklist (e.g. `liked: 2/5; on video 3`). The runner echoes your latest progress back to you next turn, so it's your reliable memory across turns. If your prior progress says you finished step X, do NOT redo step X.
 
+TOGGLE-BUTTON DECISION RULE (likes/follows/saves) — applies to every turn where you might click a toggle:
+
+  Step A: Read the COUNT next to the button (e.g. like-count "3701") and write it into `progress` as `last_count: 3701`.
+  Step B: On every subsequent turn, BEFORE deciding the action, compare the count NOW visible against the `last_count` in your prior progress.
+      - If `count_now != last_count` (it moved by 1 in either direction): your previous click ALREADY TOGGLED the button. The action is COMPLETE. Your next action MUST move on (scroll, key, click a different element, or done) — DO NOT click the toggle again, regardless of what the heart color looks like. Update `last_count` to the new value and increment your task counter (`unliked: 1/3`, etc.).
+      - If `count_now == last_count`: the click hasn't landed yet (rare — could be animation lag); you MAY click once more, but ONLY if the count truly hasn't moved. NEVER click 3 turns in a row at the same coords.
+
+Why this rule exists: heart color/fill is hard to read reliably at small sizes; integer counts are unambiguous. A count change of ±1 is a hard proof your toggle landed. Trust the integer, not the color.
+
 Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 {{
@@ -57,7 +66,7 @@ Rules:
 - IGNORE unrelated UI on screen — terminals, IDEs, code editors, log panels, other agent windows. Do NOT wait for their spinners ("Waddling…", "Bashing…", build progress, etc.). They are not part of the task; act on the app the task is about.
 - If the task names a specific app (e.g. 抖音 / Douyin), prefer launching the desktop app by its native name (type 抖音 in Spotlight, not "Douyin") so you don't end up on a website that requires login.
 - If a click on a list item or row didn't navigate, the row label/text or icon is the actual click target, not blank space inside the row.
-- TOGGLE BUTTONS (like/heart, follow/unfollow, save, mute): clicking again UNDOES the action. After clicking a toggle, BACKTRACK (the prior action is done — see CRITICAL paragraph above) and your VERY NEXT action must move on (scroll, key, click a different element, or done). NEVER re-click the same toggle "to make sure" — that is guaranteed to undo it.
+- TOGGLE BUTTONS (like/heart, follow/unfollow, save, mute): clicking again UNDOES the action. Use the COUNT-BASED RULE above — if the visible count moved by 1 since your last `progress` snapshot, the toggle is done; move on regardless of color.
 - When the task is fully complete (per your `progress`), return {{"action":"done","reasoning":"<why>","progress":"<final state>"}}.
 - If something is loading, return {{"action":"wait","reasoning":"<why>","progress":"<unchanged>"}} and you'll get a fresh screenshot."""
 
