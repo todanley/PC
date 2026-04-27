@@ -22,7 +22,7 @@ _MAX_BYTES = 4_500_000
 # Token cost on Anthropic vision is ~ (w*h)/750. Capping the long edge well below
 # the typical retina-logical resolution (e.g. 1728x1117 -> 1280x827) cuts vision
 # tokens by ~2x at quality the model can still read UI text from.
-_MAX_EDGE = int(os.environ.get("PHANTOM_MAX_EDGE", "1280"))
+_MAX_EDGE = int(os.environ.get("PHANTOM_MAX_EDGE", "1024"))
 _JPEG_QUALITY = int(os.environ.get("PHANTOM_JPEG_QUALITY", "75"))
 
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -31,9 +31,11 @@ ANTHROPIC_VERSION = "2023-06-01"
 
 SYSTEM_PROMPT = """You are an autonomous agent driving a {platform_name} computer to complete a task.
 
-Each turn you receive a fresh screenshot of the user's screen ({width}x{height} pixels — the same coordinate space the OS uses for clicks).
+Each turn you receive a fresh screenshot. The image you see is {width}x{height} pixels. All `x`/`y` coordinates you output are in this {width}x{height} IMAGE pixel space — measure them off the image directly, the same way you'd describe pixel positions in any picture. The runner converts them to OS click-space automatically; you don't need to think about that.
 
-CRITICAL: the screenshot is taken AFTER your previous action's effect has rendered. So if your previous action was "click the like heart", this screenshot already shows the heart filled red and the count incremented — your click succeeded. Do NOT repeat that action. Instead, BACKTRACK: recognize the prior action is done, and plan the NEXT step from this new state (e.g. scroll, pick the next item, or done). The same applies to any other action: if you typed text, this screenshot shows the text already typed; if you pressed a key, the navigation already happened; if you clicked a video thumbnail, the video is now loaded. Trust the screenshot — your prior action is already complete.
+CRITICAL — screenshots are POST-action: this screenshot was taken AFTER your previous action's effect has rendered. So if your previous action was "click the like heart", this screenshot already shows the heart filled red and the count incremented — your click succeeded. Do NOT repeat that action. Instead, BACKTRACK: recognize the prior action is done, and plan the NEXT step from this new state. Same for every action: if you typed text, this screenshot shows the text already typed; if you pressed a key, the navigation already happened; if you clicked a video thumbnail, the video is now loaded. Trust the screenshot — your prior action is already complete.
+
+PROGRESS — every reply MUST include a `progress` field with a one-line running checklist (e.g. `liked: 2/5; on video 3`). The runner echoes your latest progress back to you next turn, so it's your reliable memory across turns. If your prior progress says you finished step X, do NOT redo step X.
 
 Reply with ONLY a JSON object — no prose, no fences. Schema:
 
@@ -44,19 +46,20 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
   "text": "<string>",               // for type
   "key": "<combo>",                 // for key, e.g. "{primary_mod}+space", "enter", "{primary_mod}+t"
   "direction": "up" | "down",       // for scroll
-  "reasoning": "<one short sentence on why>"
+  "reasoning": "<one short sentence on why this single action>",
+  "progress": "<running checklist of what's been completed and what's left, e.g. 'liked: 2/5; on video 3, heart white, about to click'>"
 }}
 
 Rules:
 - Coordinates are in the {width}x{height} pixel space shown in the screenshot. They will be clicked as-is.
-- Prefer ONE action per turn and verify in the next screenshot.
+- ONE action per turn. Verify in the next screenshot, update `progress`, plan next.
 - Use {primary_mod}+space (Spotlight) on macOS or the Windows key on Windows to launch apps.
 - IGNORE unrelated UI on screen — terminals, IDEs, code editors, log panels, other agent windows. Do NOT wait for their spinners ("Waddling…", "Bashing…", build progress, etc.). They are not part of the task; act on the app the task is about.
 - If the task names a specific app (e.g. 抖音 / Douyin), prefer launching the desktop app by its native name (type 抖音 in Spotlight, not "Douyin") so you don't end up on a website that requires login.
 - If a click on a list item or row didn't navigate, the row label/text or icon is the actual click target, not blank space inside the row.
 - TOGGLE BUTTONS (like/heart, follow/unfollow, save, mute): clicking again UNDOES the action. After clicking a toggle, BACKTRACK (the prior action is done — see CRITICAL paragraph above) and your VERY NEXT action must move on (scroll, key, click a different element, or done). NEVER re-click the same toggle "to make sure" — that is guaranteed to undo it.
-- When the task is complete, return {{"action":"done","reasoning":"<why>"}}.
-- If something is unexpected, return {{"action":"wait","reasoning":"<why>"}} and you'll get a fresh screenshot."""
+- When the task is fully complete (per your `progress`), return {{"action":"done","reasoning":"<why>","progress":"<final state>"}}.
+- If something is loading, return {{"action":"wait","reasoning":"<why>","progress":"<unchanged>"}} and you'll get a fresh screenshot."""
 
 
 def _platform_strings():
@@ -106,12 +109,20 @@ class VisionClient:
             raise VisionError("ANTHROPIC_API_KEY not set")
         plat, primary_mod = _platform_strings()
         self.logical_w, self.logical_h = screen_size
-        # Downsample target: long edge capped at _MAX_EDGE for token cost.
+        self._last_progress: str = ""  # echoed back to the model each turn
+        # Downsample: long edge capped at _MAX_EDGE for token cost. The image
+        # we send is smaller; we tell the model coords are in IMAGE space and
+        # then scale x,y back to logical OS pixels before dispatching. This
+        # is empirically reliable to ~1px even at edge=768 — see
+        # /tmp/coord_test/test_coord.py for the experiment.
         self.scale = min(1.0, _MAX_EDGE / max(self.logical_w, self.logical_h))
         self.image_w = max(1, round(self.logical_w * self.scale))
         self.image_h = max(1, round(self.logical_h * self.scale))
         self.system = SYSTEM_PROMPT.format(
-            platform_name=plat, width=self.image_w, height=self.image_h, primary_mod=primary_mod
+            platform_name=plat,
+            width=self.image_w,
+            height=self.image_h,
+            primary_mod=primary_mod,
         )
         self.history = []  # list of {"role": ..., "content": ...}
 
@@ -145,10 +156,18 @@ class VisionClient:
     def next_action(self, screenshot_path: str) -> dict:
         b64, media_type = self._encode_image(screenshot_path)
 
-        # User turn = task reminder + new screenshot. History keeps only text
-        # JSON replies; never re-send old screenshots.
+        # User turn = task reminder + last reported progress + new screenshot.
+        # Echoing back the model's own `progress` field gives it a reliable
+        # checklist memory across turns (image history is dropped to save
+        # tokens, so this is the only persistent state the model can rely on).
+        progress_line = (
+            f"Your reported progress so far: {self._last_progress!r}\n\n"
+            if self._last_progress
+            else ""
+        )
         user_text = (
-            f"Task: {self.task}\n\nWhat's the next single action? Return JSON only."
+            f"Task: {self.task}\n\n{progress_line}"
+            "What's the next single action? Return JSON only — and remember to update `progress`."
         )
         new_user_msg = {
             "role": "user",
@@ -195,12 +214,18 @@ class VisionClient:
         if action is None:
             raise VisionError(f"invalid JSON: {m.group()[:200]}")
 
-        # Map x,y from the downsampled image space back to logical screen pixels.
+        # Model returns coords in IMAGE pixel space; scale up to logical OS
+        # pixels for the click dispatcher. (Inverse of self.scale.)
         if self.scale < 1.0:
             inv = 1.0 / self.scale
             for k in ("x", "y"):
                 if isinstance(action.get(k), (int, float)):
                     action[k] = round(action[k] * inv)
+
+        # Capture the model's running progress for echo on next turn.
+        prog = action.get("progress")
+        if isinstance(prog, str) and prog.strip():
+            self._last_progress = prog.strip()
 
         # Record into history WITHOUT the image, to keep token cost flat across long tasks
         self.history.append({

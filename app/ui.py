@@ -148,6 +148,9 @@ class MainWindow(QMainWindow):
             self._append_log(f"  → scroll {action.get('direction','')}  — {reason}")
         else:
             self._append_log(f"  → {act}  — {reason}")
+        prog = action.get("progress")
+        if prog:
+            self._append_log(f"     [progress] {prog}")
 
     def _on_finished_ok(self, msg: str):
         self._append_log(f"✓  Done: {msg}")
