@@ -90,9 +90,17 @@ class TaskRunner(QThread):
     def _dispatch(self, inp: Input, action: dict):
         act = action.get("action")
         if act == "click":
-            inp.click(action["x"], action["y"])
+            x, y = action.get("x"), action.get("y")
+            if x is None or y is None:
+                # Kimi K2.5 occasionally drops fields. Treat as a soft no-op
+                # so the next turn can recover instead of crashing the run.
+                return
+            inp.click(x, y)
         elif act == "double_click":
-            inp.double_click(action["x"], action["y"])
+            x, y = action.get("x"), action.get("y")
+            if x is None or y is None:
+                return
+            inp.double_click(x, y)
         elif act == "type":
             inp.type_text(action.get("text", ""))
         elif act == "key":
