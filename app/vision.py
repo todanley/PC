@@ -191,6 +191,17 @@ class VisionClient:
             platform_name=plat, width=prompt_w, height=prompt_h,
             primary_mod=primary_mod, coord_instructions=coord_instructions,
         )
+        # Append knowledge base — task-specific procedural tips that the
+        # model can't be expected to derive from training (e.g. how Douyin's
+        # in-app navigation works). Edit app/knowledge.md to add entries.
+        kb_path = os.path.join(os.path.dirname(__file__), "knowledge.md")
+        try:
+            with open(kb_path, "r", encoding="utf-8") as f:
+                kb = f.read().strip()
+            if kb:
+                self.system += "\n\n=== KNOWLEDGE BASE ===\n" + kb
+        except FileNotFoundError:
+            pass
         self.history = []  # list of {"role": ..., "content": ...}
 
     def _encode_image(self, screenshot_path: str) -> tuple[str, str]:

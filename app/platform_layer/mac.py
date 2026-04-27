@@ -50,7 +50,13 @@ class Input:
             raise ValueError(f"unrecognised key combo: {combo!r}")
         self._pi.press_key(main, modifiers=modifiers or None)
 
-    def scroll(self, direction: str = "down", clicks: int = 3):
+    def scroll(self, direction: str = "down", clicks: int = 3,
+               x: float | None = None, y: float | None = None):
+        """Scroll. CGEventCreateScrollWheelEvent dispatches at the CURRENT
+        cursor position, so to scroll inside a specific element (e.g. a modal
+        that doesn't accept page-level scroll), move the cursor there first."""
+        if x is not None and y is not None:
+            self._pi.move_to(x, y)
         dy = -clicks if direction == "down" else clicks
         self._pi.scroll(dy=dy)
 
