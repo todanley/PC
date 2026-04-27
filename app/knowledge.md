@@ -1,56 +1,91 @@
 # Phantom-Click knowledge base
 
-Procedural tips appended to the system prompt every turn. Add a section here
-whenever a task needs a non-obvious step the agent has to know up front.
-Keep entries terse — every byte costs tokens.
+Procedural tips appended to the system prompt every turn. The user gives a
+one-line natural-language task; everything else needed to complete it on a
+specific app lives here. Keep entries terse — every byte is a token.
+
+## App launch (any task)
+
+If the task names an app and that app isn't visible:
+- macOS: press `cmd+space`, type the app's native name (e.g. `抖音` not
+  "Douyin" — Spotlight matches the bundled app, not a website), press
+  `enter`. Wait one turn for the window to render.
+- The runner already keeps the target app frontmost via `PHANTOM_FOCUS_APP`,
+  so once it's launched you don't need to re-focus it.
+
+## Douyin desktop — overall navigation
+
+Douyin's layout shifts between three states; recognise which you're in
+before clicking:
+
+1. **Home feed / playing video** (full-screen video, right-side action rail
+   with heart, comment, save, share). Sidebar on the very left has tabs
+   `精选 / 推荐 / AI / 关注 / 朋友 / 我的 / 直播 / 放映厅 / 短剧`.
+2. **Profile page** (your own or a creator's). Top has avatar, name, stats
+   row `关注 N | 粉丝 N | 获赞 N`, then tabs `作品 / 推荐 / 喜欢 / 收藏 / …`.
+   Top-left has a small `<` back-arrow button (only on someone-else's
+   profile, NOT on your own).
+3. **Follow-list modal** (overlay window). Title `关注 (N) | 粉丝 (N)`, a
+   search bar, then rows of `avatar | name | bio | 已关注 button`. The
+   modal occupies roughly the middle-right of the screen with the rest of
+   the page dimmed behind it.
+
+## Douyin desktop — opening your follow list
+
+From the home feed: click the `我的` sidebar item → on your profile click
+the `关注 N` text in the stats row. The follow-list modal opens at row 1.
 
 ## Douyin desktop — determining a follower's gender
 
-You can almost never tell gender from the small avatar shown in the follow-list
-modal alone. To classify an account in your follow list as male / female:
+You almost always need to enter the user's profile — the small avatar in
+the modal isn't enough.
 
-1. In the 关注 list modal, click the user's NAME or AVATAR (the left side of the
-   row, NOT the 已关注 button on the right). This opens that user's profile in
-   place of the modal.
+1. In the modal, click the row's avatar OR name (the LEFT side of the
+   row, not the `已关注` button on the right). This opens the user's
+   profile in place of the modal.
 2. On the profile, look at:
    - the larger avatar (top of profile),
-   - the bio line under the name,
+   - the bio under the name,
    - the grid of their videos for face shots,
-   - any 性别 / 男 / 女 indicator if visible.
-3. Decide gender. If unclear, default to "unknown" and skip.
-4. To return to the follow-list modal — **PREFER the sidebar route**, it is
-   100% reliable:
-   - Click `我的` in the LEFT SIDEBAR (around logical `(125, 305)`).
-   - Then click the `关注 N` stat at the top of your profile (around
-     `(470, 215)`). The modal reopens at row 1.
-   - This is more clicks than the in-app back arrow, but the back arrow's
-     pixel position varies (sometimes at `(90, 130)`, sometimes hidden
-     under a video player) so it often misses. The sidebar is always at
-     the same place.
+   - any `性别 / 男 / 女` indicator if visible.
+3. Decide gender. If unclear, default to `unknown` and skip — the user
+   asked for males specifically.
 
-   - **NEVER press `escape`.** Escape on Douyin desktop closes the entire
-     follow-list modal AND the profile.
-   - **NEVER use `cmd+tab`.** The Douyin window is already frontmost; the
-     runner re-raises it every turn.
+## Douyin desktop — unfollowing on a profile
 
-5. The modal reopens at row 1, so to process all 16 follows you'd re-examine
-   the same first rows each cycle. To skip rows you've already examined,
-   use your `progress` field — keep a list `examined_names: [name1, name2, ...]`
-   and when you reopen the modal, skip any row whose name is in that list.
+The unfollow control is the `已关注` button next to the user's name on the
+profile (typically top-right of the user-info card). Click it ONCE; Douyin
+may pop a `确定` (confirm) dialog — click that too. After confirming, the
+button switches to a red `+ 关注` (Follow) state and your `关注 N` count
+drops by 1 (verifiable when you return to your own profile).
 
-## Douyin desktop — unfollowing from the profile page
+## Douyin desktop — returning from a profile to the follow modal
 
-Once on a profile, the unfollow control is the **已关注** button next to the
-account name (usually top-right of the user-info card on the profile page).
-Click it ONCE — Douyin may show a confirmation popup with a `确定` (confirm)
-button; click that too. After confirmation the button switches to a red
-`关注` (Follow) state and the user's 关注 count drops by 1.
+PREFER the sidebar route — it works regardless of which profile/layout
+you're on:
+
+1. Click `我的` in the LEFT sidebar (re-localize from the current
+   screenshot — its position shifts; the icon is consistent).
+2. On your profile, click the `关注 N` text in the stats row.
+
+This always works. The in-app `<` back arrow is fragile — it isn't shown
+on every layout, and its position varies. Only use it if you can clearly
+see it in the current screenshot.
+
+The follow modal reopens at row 1, so you'll re-see rows you already
+processed. Track them in `progress.examined_names: [list of names]` and
+SKIP any row whose name is in that list before clicking into a new one.
 
 ## Douyin desktop — scrolling within a modal
 
-`scroll` already moves the cursor to the modal's footprint (≈ 55% across the
-screen) before dispatching the wheel event, so it scrolls the modal contents
-directly. If you need a different anchor, pass `scroll_x` and `scroll_y` in
-your action JSON (in OS-logical pixels) — that overrides the default. After
-scrolling, the rows that were visible may shift up; re-read the row labels
-in the next screenshot before continuing.
+`scroll` action already moves the cursor to the modal's footprint
+(≈ 55%/55% of the screen) before dispatching the wheel event, so it
+scrolls the modal contents. After scrolling, rows that were visible may
+shift up; re-read row labels from the new screenshot.
+
+## Douyin desktop — `已关注` is a toggle
+
+Clicking `已关注` once unfollows. Clicking it again would re-follow. Apply
+the count rule from the system prompt's TOGGLE-BUTTON section: read the
+profile's `粉丝/关注` count if visible, or just trust that one click is
+enough and move on (do NOT re-click).

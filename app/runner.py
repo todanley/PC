@@ -11,12 +11,6 @@ from .vision import VisionClient, VisionError
 
 
 _FOCUS_APP = os.environ.get("PHANTOM_FOCUS_APP", "")
-# After N consecutive same-bucket clicks (all suppressed), the runner forces
-# a deterministic escape click. Useful when the model is stuck on a target
-# that doesn't actually respond. PHANTOM_ESCAPE_X/Y in OS-logical pixels.
-_ESCAPE_AFTER_N_SUPPRESSES = 2
-_ESCAPE_X = int(os.environ.get("PHANTOM_ESCAPE_X", "0"))
-_ESCAPE_Y = int(os.environ.get("PHANTOM_ESCAPE_Y", "0"))
 
 
 def _refocus():
@@ -115,7 +109,7 @@ class TaskRunner(QThread):
 
         step = 0
         last_bucket: tuple[int, int] | None = None
-        consecutive_suppresses = 0
+        pending_feedback: str | None = None
         while True:
             step += 1
             if self._cancel:
@@ -133,10 +127,11 @@ class TaskRunner(QThread):
 
             self.step_started.emit(step, f"Step {step}: asking Claude…")
             try:
-                action = client.next_action(shot)
+                action = client.next_action(shot, feedback=pending_feedback)
             except VisionError as e:
                 self.failed.emit(f"vision call failed: {e}")
                 return
+            pending_feedback = None
 
             if self._cancel:
                 self.failed.emit("cancelled")
@@ -145,33 +140,24 @@ class TaskRunner(QThread):
             new_bucket = _click_bucket(action)
             if new_bucket is not None and new_bucket == last_bucket:
                 # Silent suppressor — preserve toggle state. The model gets a
-                # fresh screenshot on the next turn and will (hopefully) pick
-                # a different action this time.
+                # fresh screenshot on the next turn and a per-turn feedback
+                # nudge so it knows the previous attempt was a no-op and
+                # localizes a different element from the current screenshot.
                 self.step_done.emit(step, {
                     "action": "suppressed_repeat_click",
                     "x": action.get("x"), "y": action.get("y"),
                     "reasoning": "runner: same-bucket click as previous turn — dropped to preserve toggle state.",
                 })
-                consecutive_suppresses += 1
-                # Escalation: after N suppressions, run a deterministic
-                # escape click (configured via PHANTOM_ESCAPE_X/Y) — usually
-                # the user-profile sidebar item — so the agent gets out of
-                # whatever loop it was in.
-                if (consecutive_suppresses >= _ESCAPE_AFTER_N_SUPPRESSES
-                        and _ESCAPE_X and _ESCAPE_Y):
-                    inp.click(_ESCAPE_X, _ESCAPE_Y)
-                    last_bucket = (round(_ESCAPE_X / _CLICK_BUCKET_PX),
-                                   round(_ESCAPE_Y / _CLICK_BUCKET_PX))
-                    consecutive_suppresses = 0
-                    self.step_done.emit(step, {
-                        "action": "forced_escape_click",
-                        "x": _ESCAPE_X, "y": _ESCAPE_Y,
-                        "reasoning": f"runner: {_ESCAPE_AFTER_N_SUPPRESSES} suppressions in a row — clicked escape coord ({_ESCAPE_X},{_ESCAPE_Y}).",
-                    })
+                px, py = action.get("x"), action.get("y")
+                pending_feedback = (
+                    f"your previous click at ({px},{py}) didn't change the screen "
+                    "(likely missed the target or the element wasn't actually clickable). "
+                    "Re-localize from the current screenshot — the layout may have shifted "
+                    "since your last attempt — and pick a DIFFERENT coordinate or element. "
+                    "Don't repeat the same coordinate."
+                )
                 time.sleep(_POST_ACTION_DELAY_S)
                 continue
-            else:
-                consecutive_suppresses = 0
 
             try:
                 self._dispatch(inp, action)

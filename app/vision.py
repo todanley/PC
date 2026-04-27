@@ -22,7 +22,11 @@ _MAX_BYTES = 4_500_000
 # Token cost on Anthropic vision is ~ (w*h)/750. Capping the long edge well below
 # the typical retina-logical resolution (e.g. 1728x1117 -> 1280x827) cuts vision
 # tokens by ~2x at quality the model can still read UI text from.
-_MAX_EDGE = int(os.environ.get("PHANTOM_MAX_EDGE", "1024"))
+# Default to RETINA resolution (3456 on the user's logical-1728 display) so
+# the model has enough pixels for small UI targets like Douyin's 已关注
+# buttons or back arrows. JPEG encoder still falls back to a smaller size
+# if the file would exceed the API's per-image byte cap.
+_MAX_EDGE = int(os.environ.get("PHANTOM_MAX_EDGE", "3456"))
 _JPEG_QUALITY = int(os.environ.get("PHANTOM_JPEG_QUALITY", "75"))
 
 MODEL = os.environ.get("PHANTOM_MODEL", "claude-opus-4-7")
@@ -53,6 +57,16 @@ SYSTEM_PROMPT = """You are an autonomous agent driving a {platform_name} compute
 Each turn you receive a fresh screenshot. The image you see is {width}x{height} pixels. {coord_instructions}
 
 CRITICAL — screenshots are POST-action: this screenshot was taken AFTER your previous action's effect has rendered. So if your previous action was "click the like heart", this screenshot already shows the heart filled red and the count incremented — your click succeeded. Do NOT repeat that action. Instead, BACKTRACK: recognize the prior action is done, and plan the NEXT step from this new state. Same for every action: if you typed text, this screenshot shows the text already typed; if you pressed a key, the navigation already happened; if you clicked a video thumbnail, the video is now loaded. Trust the screenshot — your prior action is already complete.
+
+CRITICAL — re-localize EVERY turn from the CURRENT screenshot: app layouts shift between contexts (a sidebar item in one view is a recommendation thumbnail in another, a "back arrow" sits at one position on a profile and another inside a modal). NEVER reuse a coordinate from a prior turn. Look at THIS screenshot, find the element you want, and pick the coordinate that's on it RIGHT NOW. If a previous click didn't change the screen (the runner will tell you via [Runner feedback]), that means your guess for that element was wrong in this layout — re-examine the image and pick a DIFFERENT coordinate.
+
+═══ GLOBAL HARD RULES — these override ANY visual instinct ═══
+
+▸ NEVER press `escape`. Not to close a menu, not to go back, not to "reset". The macOS app may handle escape in unexpected ways and close stuff you wanted open. If a menu/popover opened by accident, click somewhere AWAY from it (e.g. a known empty area of the page) instead.
+▸ NEVER use `cmd+tab` or any cross-app shortcut. The runner keeps the target app frontmost automatically; cycling apps creates focus chaos.
+▸ NEVER repeat the exact same `(x, y)` you used last turn. If a click missed, the right coord is SOMEWHERE ELSE in the current screenshot.
+▸ NEVER click in the macOS menu bar (the strip at y < 25 with the app name). It opens system dropdowns you then need to dismiss without using escape (which is forbidden).
+▸ Only output JSON the schema below describes. Always include `x` AND `y` for every click — never a bare value.
 
 PROGRESS — every reply MUST include a `progress` field with a one-line running checklist (e.g. `liked: 2/5; on video 3`). The runner echoes your latest progress back to you next turn, so it's your reliable memory across turns. If your prior progress says you finished step X, do NOT redo step X.
 
@@ -136,6 +150,14 @@ def _lenient_json_loads(raw: str) -> dict | None:
     # rewrite when the leading 0 is followed by a digit and not by `.`.
     e = re.sub(r"(:\s*)0+(\d)", r"\1\2", d)
     candidates.append(e)
+    # Repair 6: missing `y` key (e.g. `"x": 0.891, "0.102", "reasoning"` →
+    # `"x": 0.891, "y": 0.102, "reasoning"`). When the parser sees a bare
+    # quoted-or-unquoted numeric value after `"x": <num>,`, infer it's `y`.
+    f = re.sub(
+        r'("x"\s*:\s*-?[\d.]+\s*,\s*)"?(-?[\d.]+)"?(\s*,)',
+        r'\1"y": \2\3', e,
+    )
+    candidates.append(f)
     for c in candidates:
         try:
             return json.loads(c)
@@ -162,9 +184,17 @@ class VisionClient:
         #   - Moonshot Kimi K2.5: ignores the image-space instruction in
         #     complex UI screenshots and returns coords in OS-logical space
         #     directly (UI-automation training prior). Runner DOES NOT scale.
-        self.scale = min(1.0, _MAX_EDGE / max(self.logical_w, self.logical_h))
-        self.image_w = max(1, round(self.logical_w * self.scale))
-        self.image_h = max(1, round(self.logical_h * self.scale))
+        # The screencapture is at retina (~2x logical on macOS). Scale is
+        # measured against retina, not logical, so PHANTOM_MAX_EDGE >= retina
+        # means "send the screenshot as-is" (no downsample). Coord arithmetic
+        # still uses logical dims for click dispatch.
+        retina_w, retina_h = self.logical_w * 2, self.logical_h * 2
+        self.scale_from_retina = min(1.0, _MAX_EDGE / max(retina_w, retina_h))
+        self.image_w = max(1, round(retina_w * self.scale_from_retina))
+        self.image_h = max(1, round(retina_h * self.scale_from_retina))
+        # `self.scale` still reports image-edge / logical-edge (the older
+        # variable used by the Anthropic coord-scale-up path).
+        self.scale = self.image_w / self.logical_w
         if PROVIDER == "moonshot":
             # Kimi K2.5 is unreliable about pixel-space coords on real UI
             # screenshots — returns mixed conventions (image-px vs OS-px vs
@@ -231,20 +261,22 @@ class VisionClient:
             s -= 0.15
         raise VisionError("could not compress screenshot under 5MB")
 
-    def next_action(self, screenshot_path: str) -> dict:
+    def next_action(self, screenshot_path: str, feedback: str | None = None) -> dict:
         b64, media_type = self._encode_image(screenshot_path)
 
-        # User turn = task reminder + last reported progress + new screenshot.
-        # Echoing back the model's own `progress` field gives it a reliable
-        # checklist memory across turns (image history is dropped to save
-        # tokens, so this is the only persistent state the model can rely on).
+        # User turn = optional one-line runner feedback + task reminder +
+        # last reported progress + new screenshot. Feedback is per-turn,
+        # ephemeral, and never carried over — runner regenerates it from
+        # the current attempt's outcome alone (e.g. "your last click was
+        # dropped because it would have toggled the same button").
         progress_line = (
             f"Your reported progress so far: {self._last_progress!r}\n\n"
             if self._last_progress
             else ""
         )
+        feedback_line = f"[Runner feedback] {feedback}\n\n" if feedback else ""
         user_text = (
-            f"Task: {self.task}\n\n{progress_line}"
+            f"{feedback_line}Task: {self.task}\n\n{progress_line}"
             "What's the next single action? Return JSON only — and remember to update `progress`."
         )
         if PROVIDER == "moonshot":
