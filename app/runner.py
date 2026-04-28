@@ -71,6 +71,11 @@ def _click_bucket(action: dict) -> tuple[int, int] | None:
 class TaskRunner(QThread):
     step_started = Signal(int, str)
     step_done = Signal(int, dict)
+    # Carries the full vision turn so the UI can show prompt + screenshot +
+    # response. Payload: {step, screenshot, user_text, response_text, action,
+    # system_prompt} — system_prompt is included only on step 1 (it doesn't
+    # change between turns, the UI shows it once via a toggle).
+    turn_logged = Signal(dict)
     finished_ok = Signal(str)
     failed = Signal(str)
 
@@ -132,6 +137,19 @@ class TaskRunner(QThread):
                 self.failed.emit(f"vision call failed: {e}")
                 return
             pending_feedback = None
+
+            # Surface the raw turn (prompt + screenshot + response) to the UI.
+            lt = client.last_turn or {}
+            self.turn_logged.emit({
+                "step": step,
+                "screenshot": lt.get("screenshot", shot),
+                "user_text": lt.get("user_text", ""),
+                "response_text": lt.get("response_text", ""),
+                "action": action,
+                # Send system prompt only on step 1 — it's identical every
+                # turn and the UI keeps it cached.
+                "system_prompt": client.system if step == 1 else None,
+            })
 
             if self._cancel:
                 self.failed.emit("cancelled")

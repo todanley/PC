@@ -52,61 +52,47 @@ API_URL = (
     else "https://api.anthropic.com/v1/messages"
 )
 
-SYSTEM_PROMPT = """You are an autonomous agent driving a {platform_name} computer to complete a task.
+SYSTEM_PROMPT = """You are an autonomous agent driving a {platform_name} computer. The user gives a one-line task; you complete it by issuing screen actions one at a time.
 
-Each turn you receive a fresh screenshot. The image you see is {width}x{height} pixels. {coord_instructions}
+Each turn you receive a fresh screenshot. {coord_instructions}
 
-CRITICAL — screenshots are POST-action: this screenshot was taken AFTER your previous action's effect has rendered. So if your previous action was "click the like heart", this screenshot already shows the heart filled red and the count incremented — your click succeeded. Do NOT repeat that action. Instead, BACKTRACK: recognize the prior action is done, and plan the NEXT step from this new state. Same for every action: if you typed text, this screenshot shows the text already typed; if you pressed a key, the navigation already happened; if you clicked a video thumbnail, the video is now loaded. Trust the screenshot — your prior action is already complete.
+GROUND IN THE IMAGE: every turn, look at THIS screenshot. Identify what's actually visible — windows, menus, buttons, text — only from the pixels in front of you. Do NOT assume any element is present because the task name or your prior progress mentions it. If you can't see a navigation control in the current image, do not pretend you can; pick a different action that IS supported by what you see.
 
-CRITICAL — re-localize EVERY turn from the CURRENT screenshot: app layouts shift between contexts (a sidebar item in one view is a recommendation thumbnail in another, a "back arrow" sits at one position on a profile and another inside a modal). NEVER reuse a coordinate from a prior turn. Look at THIS screenshot, find the element you want, and pick the coordinate that's on it RIGHT NOW. If a previous click didn't change the screen (the runner will tell you via [Runner feedback]), that means your guess for that element was wrong in this layout — re-examine the image and pick a DIFFERENT coordinate.
+POST-ACTION SCREENSHOT: this image was taken AFTER your previous action's effect rendered. If you just clicked a toggle, the new state is already on screen. Trust the screenshot — your prior action is done. Don't repeat it.
 
-═══ GLOBAL HARD RULES — these override ANY visual instinct ═══
+RE-LOCALIZE EVERY TURN: app layouts shift between contexts. A control at one coordinate on screen A may not exist at all on screen B. NEVER reuse a coordinate from a prior turn — recompute from the current image.
 
-▸ NEVER press `escape`. Not to close a menu, not to go back, not to "reset". The macOS app may handle escape in unexpected ways and close stuff you wanted open. If a menu/popover opened by accident, click somewhere AWAY from it (e.g. a known empty area of the page) instead.
-▸ NEVER use `cmd+tab` or any cross-app shortcut. The runner keeps the target app frontmost automatically; cycling apps creates focus chaos.
-▸ NEVER repeat the exact same `(x, y)` you used last turn. If a click missed, the right coord is SOMEWHERE ELSE in the current screenshot.
-▸ NEVER click in the macOS menu bar (the strip at y < 25 with the app name). It opens system dropdowns you then need to dismiss without using escape (which is forbidden).
-▸ Only output JSON the schema below describes. Always include `x` AND `y` for every click — never a bare value.
+GLOBAL HARD RULES:
+▸ NEVER press `escape`. It often closes more than the user wanted (e.g. an entire modal). If a stray menu/popover appeared, click outside it on empty space.
+▸ NEVER use `cmd+tab` or other cross-app shortcuts. The runner keeps the target app focused.
+▸ NEVER repeat the exact same `(x, y)` you used last turn. If a click missed, the correct target is somewhere else in this image — find it.
+▸ NEVER click the macOS menu bar (the strip with the app name at y < 25). It opens system dropdowns.
+▸ Only output JSON per the schema below. `click`/`double_click` MUST include both `x` and `y`.
 
-PROGRESS — every reply MUST include a `progress` field with a one-line running checklist (e.g. `liked: 2/5; on video 3`). The runner echoes your latest progress back to you next turn, so it's your reliable memory across turns. If your prior progress says you finished step X, do NOT redo step X.
+PROGRESS FIELD: every reply MUST include a `progress` string — your one-line running checklist. The runner echoes the most recent value back to you next turn, so it's your only persistent memory. If `progress` says you finished step X, don't redo it. Keep `progress` factual and based on what your action ACTUALLY changed (verifiable from the next screenshot), not what you intended.
 
-TOGGLE-BUTTON DECISION RULE (likes/follows/saves) — applies to every turn where you might click a toggle:
-
-  Step A: Read the COUNT next to the button (e.g. like-count "3701") and write it into `progress` as `last_count: 3701`.
-  Step B: On every subsequent turn, BEFORE deciding the action, compare the count NOW visible against the `last_count` in your prior progress.
-      - If `count_now != last_count` (it moved by 1 in either direction): your previous click ALREADY TOGGLED the button. The action is COMPLETE. Your next action MUST move on (scroll, key, click a different element, or done) — DO NOT click the toggle again, regardless of what the heart color looks like. Update `last_count` to the new value and increment your task counter (`unliked: 1/3`, etc.).
-      - If `count_now == last_count`: the click hasn't landed yet (rare — could be animation lag); you MAY click once more, but ONLY if the count truly hasn't moved. NEVER click 3 turns in a row at the same coords.
-
-  Step C — ABBREVIATED COUNTS (1.4万, 13.5万, 1.2k, 2M, 万+): when the count is shown abbreviated, ±1 changes are INVISIBLE in the display. The count rule cannot help you. In this case, fall back to the TOOLTIP TEXT or BUTTON LABEL on the heart:
-      - Douyin: tooltip `点赞` = currently UNLIKED (clicking would Like). tooltip `取消点赞` = currently LIKED (clicking would Unlike).
-      - Generic: a button labelled "Like" / "Follow" / "Subscribe" means you are NOT in that state yet. A button labelled "Unlike" / "Following" / "Subscribed" / "Unfollow" means you ARE in that state.
-      - After ONE click on an abbreviated-count toggle, ASSUME the click landed (you've already done it once with reasonable accuracy). Your next action MUST move on. Don't keep clicking to verify with no new evidence.
-
-Why this rule exists: heart color/fill is hard to read reliably at small sizes; integer counts are unambiguous when shown precisely. A count change of ±1 is a hard proof your toggle landed. Trust the integer, then the tooltip, then the color.
+TOGGLE-BUTTON RULE (any like / follow / save / subscribe / mute, etc.): a single click flips state; clicking again undoes it. After clicking a toggle, your NEXT action must move on (scroll, key, navigate, done). Use the visible numeric count (e.g. like-count) as proof: read it before clicking, store as `last_count` in progress, compare next turn.
+- If the count changed by 1 → toggle landed → MOVE ON. Don't re-click.
+- If the count is shown abbreviated (e.g. 1.4万, 13K, 2M) — ±1 changes won't be visible — fall back to the BUTTON LABEL: an "Unfollow"/"Following"/"Liked"/"Subscribed" label means you ARE in that state already.
+- After one click on an abbreviated-count toggle, assume it landed and move on; never click 3 turns in a row at similar coords.
 
 Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 {{
   "action": "click" | "double_click" | "type" | "key" | "scroll" | "wait" | "done",
-  "x": <int, in the same {width}x{height} space>,    // for click / double_click
-  "y": <int>,
+  "x": <num>, "y": <num>,           // for click / double_click
   "text": "<string>",               // for type
-  "key": "<combo>",                 // for key, e.g. "{primary_mod}+space", "enter", "{primary_mod}+t"
+  "key": "<combo>",                 // for key, e.g. "{primary_mod}+space", "enter"
   "direction": "up" | "down",       // for scroll
   "reasoning": "<one short sentence on why this single action>",
-  "progress": "<running checklist of what's been completed and what's left, e.g. 'liked: 2/5; on video 3, heart white, about to click'>"
+  "progress": "<running checklist of what's been completed and what's left>"
 }}
 
-Rules:
-- Coordinates are in the {width}x{height} pixel space shown in the screenshot. They will be clicked as-is.
-- ONE action per turn. Verify in the next screenshot, update `progress`, plan next.
-- Use {primary_mod}+space (Spotlight) on macOS or the Windows key on Windows to launch apps.
-- IGNORE unrelated UI on screen — terminals, IDEs, code editors, log panels, other agent windows. Do NOT wait for their spinners ("Waddling…", "Bashing…", build progress, etc.). They are not part of the task; act on the app the task is about.
-- If the task names a specific app (e.g. 抖音 / Douyin), prefer launching the desktop app by its native name (type 抖音 in Spotlight, not "Douyin") so you don't end up on a website that requires login.
-- If a click on a list item or row didn't navigate, the row label/text or icon is the actual click target, not blank space inside the row.
-- TOGGLE BUTTONS (like/heart, follow/unfollow, save, mute): clicking again UNDOES the action. Use the COUNT-BASED RULE above — if the visible count moved by 1 since your last `progress` snapshot, the toggle is done; move on regardless of color.
-- When the task is fully complete (per your `progress`), return {{"action":"done","reasoning":"<why>","progress":"<final state>"}}.
-- If something is loading, return {{"action":"wait","reasoning":"<why>","progress":"<unchanged>"}} and you'll get a fresh screenshot."""
+Action notes:
+- ONE action per turn. The next turn shows the result.
+- To launch an app on macOS, press `{primary_mod}+space`, `type` the app's native name, then `key: enter`. If the task names an app in a non-Latin script (e.g. Chinese), type it in that script — Spotlight matches the bundled app name.
+- IGNORE unrelated windows: terminals, IDEs, log panels, monitor outputs. Don't wait on their spinners or take cues from their text.
+- `done` when your `progress` shows the task is fully complete. `wait` when content is still loading."""
 
 
 def _platform_strings():
@@ -206,8 +192,7 @@ class VisionClient:
                 "(x=0, y=0) is the top-left of the screen, (x=1, y=1) is the bottom-right. "
                 "Use up to 3 decimal places (e.g. 0.815). The runner multiplies your fractions "
                 "by the OS pixel dimensions automatically — do NOT output raw pixel coordinates "
-                "and do NOT include any unit. Examples: heart icon at top-right ≈ (0.92, 0.18); "
-                "Spotlight icon in menu bar ≈ (0.97, 0.02)."
+                "and do NOT include any unit."
             )
         else:
             prompt_w, prompt_h = self.image_w, self.image_h
@@ -233,6 +218,7 @@ class VisionClient:
         except FileNotFoundError:
             pass
         self.history = []  # list of {"role": ..., "content": ...}
+        self.last_turn: dict | None = None  # populated each next_action() call
 
     def _encode_image(self, screenshot_path: str) -> tuple[str, str]:
         """Resize screenshot to the downsampled (image_w x image_h) target and
@@ -349,6 +335,25 @@ class VisionClient:
             text = "".join(
                 c.get("text", "") for c in payload.get("content", []) if c.get("type") == "text"
             ).strip()
+        # Stash the raw turn so the runner/UI can show what was actually sent
+        # and what came back. System prompt is the same every turn so we keep
+        # it on the client (UI shows it once via a toggle).
+        self.last_turn = {
+            "screenshot": screenshot_path,
+            "user_text": user_text,
+            "response_text": text,
+        }
+        dump_path = os.environ.get("PHANTOM_TURN_DUMP")
+        if dump_path:
+            try:
+                with open(dump_path, "a", encoding="utf-8") as fh:
+                    fh.write("\n" + "=" * 80 + "\n")
+                    fh.write(f"TURN @ {screenshot_path}\n")
+                    fh.write("=" * 80 + "\nSYSTEM:\n" + self.system + "\n")
+                    fh.write("-" * 80 + "\nUSER TEXT:\n" + user_text + "\n")
+                    fh.write("-" * 80 + "\nRESPONSE:\n" + text + "\n")
+            except Exception:
+                pass
         m = re.search(r"\{[\s\S]*\}", text)
         if not m:
             raise VisionError(f"no JSON in response: {text[:200]}")
@@ -372,11 +377,14 @@ class VisionClient:
                     action[k] = round(v * dim)
                 else:
                     action[k] = max(0, min(dim - 1, round(v)))
-        elif self.scale < 1.0:
-            inv = 1.0 / self.scale
+        elif self.scale != 1.0:
+            # Map model's image-pixel coords back to logical OS coords.
+            # scale = image_edge / logical_edge, so divide to get OS pixels.
+            # When scale > 1.0 (retina image, larger than logical), this is
+            # a halve. When scale < 1.0 (downsampled), this is an upscale.
             for k in ("x", "y"):
                 if isinstance(action.get(k), (int, float)):
-                    action[k] = round(action[k] * inv)
+                    action[k] = round(action[k] / self.scale)
 
         # Capture the model's running progress for echo on next turn.
         prog = action.get("progress")
