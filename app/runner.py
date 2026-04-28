@@ -208,6 +208,12 @@ class TaskRunner(QThread):
 
         step = 0
         last_bucket: tuple[int, int] | None = None
+        # Counts consecutive turns where the bucket suppressor fired. After
+        # `_STUCK_LIMIT` of these in a row, the model is locked into a coord
+        # the runner believes is wrong — abort the run with a pointer to the
+        # recording so the user / debugger can replay what happened.
+        consecutive_stuck = 0
+        _STUCK_LIMIT = 3
         pending_feedback: str | None = None
         while True:
             step += 1
@@ -216,6 +222,19 @@ class TaskRunner(QThread):
                 return
 
             _refocus()
+            # Park the cursor over the typical content area before
+            # screenshotting. Many app UIs (e.g. Douyin's single-video
+            # action rail) only render hover-triggered controls when the
+            # cursor is over the content; without this they're invisible
+            # to the model and it hallucinates coordinates for elements
+            # that aren't actually drawn.
+            try:
+                inp.scroll  # touch attribute to ensure inp is initialized
+                inp._pi.move_to(self._scroll_default_x, self._scroll_default_y)  # type: ignore[attr-defined]
+                time.sleep(0.25)  # let hover UI paint
+            except Exception:
+                pass
+
             self.step_started.emit(step, f"Step {step}: capturing screen…")
             shot = self._shot_path(step)
             try:
@@ -282,6 +301,16 @@ class TaskRunner(QThread):
                     "x": action.get("x"), "y": action.get("y"),
                     "reasoning": "runner: same-bucket click as previous turn — dropped to preserve toggle state.",
                 })
+                consecutive_stuck += 1
+                if consecutive_stuck >= _STUCK_LIMIT:
+                    px, py = action.get("x"), action.get("y")
+                    rec = self._recorder_path or "(no recording)"
+                    self.failed.emit(
+                        f"stuck: model emitted same-bucket click ({px},{py}) "
+                        f"{consecutive_stuck} turns in a row. "
+                        f"Run dir: {self._tmpdir}  Video: {rec}"
+                    )
+                    return
                 px, py = action.get("x"), action.get("y")
                 pending_feedback = (
                     f"your previous click at ({px},{py}) didn't change the screen "
@@ -292,6 +321,8 @@ class TaskRunner(QThread):
                 )
                 time.sleep(_POST_ACTION_DELAY_S)
                 continue
+            # Click landed (or non-click action) — reset the stuck counter.
+            consecutive_stuck = 0
 
             try:
                 self._dispatch(inp, action)
