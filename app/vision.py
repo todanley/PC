@@ -298,7 +298,28 @@ class VisionClient:
             # is a fresh browser session with no carry-over history, so we
             # inline the system prompt every turn. The screenshot is uploaded
             # via --reference; the prompt is passed on argv.
-            full_prompt = self.system + "\n\n" + user_text
+            #
+            # Gemini's web chat is heavily RLHF'd toward conversational
+            # output; without an aggressive JSON-only frame it asks
+            # follow-up questions instead of emitting the action JSON. The
+            # wrapper below: (a) leads with the task in `<task>` tags so
+            # Gemini can't claim it doesn't see it, (b) closes with a hard
+            # OUTPUT-FORMAT directive that's the LAST thing the model
+            # reads (closing instructions dominate in chat models).
+            full_prompt = (
+                "You are executing a structured action loop. Do NOT ask "
+                "follow-up questions. Do NOT engage in conversation. Output "
+                "ONE JSON object per the schema below — nothing before or "
+                "after it.\n\n"
+                "<instructions>\n" + self.system + "\n</instructions>\n\n"
+                "<turn>\n" + user_text + "\n</turn>\n\n"
+                "OUTPUT FORMAT: respond with EXACTLY ONE JSON object, "
+                "nothing else. Your reply must START with `{` and END with "
+                "`}`. No prose, no markdown fences, no questions. If "
+                "uncertain, output: "
+                '{"action":"wait","reasoning":"need more info",'
+                '"progress":"<your progress>"}'
+            )
             try:
                 proc = subprocess.run(
                     ["python3", GEMINI_CLI, "ask", full_prompt,
