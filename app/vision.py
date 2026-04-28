@@ -5,6 +5,7 @@ import json
 import os
 import re
 import ssl
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -38,18 +39,29 @@ ANTHROPIC_VERSION = "2023-06-01"
 #   Kimi K2.5 is OpenAI-compatible, ~25x cheaper than Claude Opus on input,
 #   and natively multimodal. Set PHANTOM_MODEL=kimi-k2.5 (or kimi-k2.6) and
 #   ANTHROPIC_API_KEY=<your moonshot key> (key env name kept for simplicity).
+# - gemini    (for gemini-*): no HTTP API key — drives gemini.google.com via
+#   the Playwright-based CLI at ~/.claude/tools/gemini.py using the user's
+#   logged-in Chrome cookies. Free under the user's existing Gemini Pro
+#   subscription. Slower (~30-60s/turn) and the Chromium window pops up
+#   during each call, but no API quota / 429s.
 def _provider() -> str:
     p = os.environ.get("PHANTOM_PROVIDER", "").lower()
-    if p in ("anthropic", "moonshot"):
+    if p in ("anthropic", "moonshot", "gemini"):
         return p
     if MODEL.startswith(("kimi-", "moonshot-")):
         return "moonshot"
+    if MODEL.startswith("gemini"):
+        return "gemini"
     return "anthropic"
 
 PROVIDER = _provider()
 API_URL = (
     "https://api.moonshot.ai/v1/chat/completions" if PROVIDER == "moonshot"
     else "https://api.anthropic.com/v1/messages"
+)
+# Path to the Gemini CLI tool (only used when PROVIDER == "gemini").
+GEMINI_CLI = os.path.expanduser(
+    os.environ.get("PHANTOM_GEMINI_CLI", "~/.claude/tools/gemini.py")
 )
 
 SYSTEM_PROMPT = """You are an autonomous agent driving a {platform_name} computer. The user gives a one-line task; you complete it by issuing screen actions one at a time.
@@ -158,8 +170,11 @@ class VisionClient:
     def __init__(self, task: str, screen_size, api_key: str = None):
         self.task = task
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not self.api_key:
+        # Gemini provider uses the user's browser session — no API key needed.
+        if PROVIDER != "gemini" and not self.api_key:
             raise VisionError("ANTHROPIC_API_KEY not set")
+        if PROVIDER == "gemini" and not os.path.exists(GEMINI_CLI):
+            raise VisionError(f"Gemini CLI not found at {GEMINI_CLI}")
         plat, primary_mod = _platform_strings()
         self.logical_w, self.logical_h = screen_size
         self._last_progress: str = ""  # echoed back to the model each turn
@@ -186,6 +201,19 @@ class VisionClient:
             # screenshots — returns mixed conventions (image-px vs OS-px vs
             # 0-1 fractions). Force a normalized 0.000-1.000 frame: it's
             # unambiguous and we multiply by logical dims after parsing.
+            prompt_w, prompt_h = self.image_w, self.image_h
+            coord_instructions = (
+                "All x/y coordinates you output are NORMALIZED FRACTIONS in [0, 1]: "
+                "(x=0, y=0) is the top-left of the screen, (x=1, y=1) is the bottom-right. "
+                "Use up to 3 decimal places (e.g. 0.815). The runner multiplies your fractions "
+                "by the OS pixel dimensions automatically — do NOT output raw pixel coordinates "
+                "and do NOT include any unit."
+            )
+        elif PROVIDER == "gemini":
+            # Gemini's vision tower returns spatially-grounded answers in
+            # normalized 0-1000 ymin,xmin,ymax,xmax tuples by default. For
+            # JSON action output, pin to normalized 0-1 fractions like Kimi —
+            # the cleanest convention to translate to clicks.
             prompt_w, prompt_h = self.image_w, self.image_h
             coord_instructions = (
                 "All x/y coordinates you output are NORMALIZED FRACTIONS in [0, 1]: "
@@ -265,6 +293,61 @@ class VisionClient:
             f"{feedback_line}Task: {self.task}\n\n{progress_line}"
             "What's the next single action? Return JSON only — and remember to update `progress`."
         )
+        if PROVIDER == "gemini":
+            # Drive gemini.google.com via the Playwright CLI tool. Each call
+            # is a fresh browser session with no carry-over history, so we
+            # inline the system prompt every turn. The screenshot is uploaded
+            # via --reference; the prompt is passed on argv.
+            full_prompt = self.system + "\n\n" + user_text
+            try:
+                proc = subprocess.run(
+                    ["python3", GEMINI_CLI, "ask", full_prompt,
+                     "--reference", screenshot_path, "--long"],
+                    capture_output=True, timeout=240, check=False,
+                )
+            except subprocess.TimeoutExpired:
+                raise VisionError("gemini CLI timed out (>240s)")
+            if proc.returncode != 0:
+                err = (proc.stderr or b"")[-400:].decode("utf-8", "ignore")
+                raise VisionError(f"gemini CLI rc={proc.returncode}: {err}")
+            text = (proc.stdout or b"").decode("utf-8", "ignore").strip()
+            self.last_turn = {
+                "screenshot": screenshot_path,
+                "user_text": user_text,
+                "response_text": text,
+            }
+            dump_path = os.environ.get("PHANTOM_TURN_DUMP")
+            if dump_path:
+                try:
+                    with open(dump_path, "a", encoding="utf-8") as fh:
+                        fh.write("\n" + "=" * 80 + "\n")
+                        fh.write(f"TURN @ {screenshot_path}\n")
+                        fh.write("=" * 80 + "\nSYSTEM:\n" + self.system + "\n")
+                        fh.write("-" * 80 + "\nUSER TEXT:\n" + user_text + "\n")
+                        fh.write("-" * 80 + "\nRESPONSE:\n" + text + "\n")
+                except Exception:
+                    pass
+            m = re.search(r"\{[\s\S]*\}", text)
+            if not m:
+                raise VisionError(f"no JSON in response: {text[:200]}")
+            action = _lenient_json_loads(m.group())
+            if action is None:
+                raise VisionError(f"invalid JSON: {m.group()[:200]}")
+            # Gemini gets the same normalized-fraction instruction as Kimi.
+            for k, dim in (("x", self.logical_w), ("y", self.logical_h)):
+                v = action.get(k)
+                if not isinstance(v, (int, float)):
+                    continue
+                if 0 <= v <= 1.5:
+                    action[k] = round(v * dim)
+                else:
+                    action[k] = max(0, min(dim - 1, round(v)))
+            prog = action.get("progress")
+            if isinstance(prog, str) and prog.strip():
+                self._last_progress = prog.strip()
+            # No history accumulation for Gemini (fresh browser each call).
+            return action
+
         if PROVIDER == "moonshot":
             # OpenAI-compatible: image_url with data: URI, system as message.
             new_user_msg = {
