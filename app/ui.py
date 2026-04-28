@@ -297,12 +297,18 @@ class MainWindow(QMainWindow):
         card = _TurnCard(payload)
         # Insert above the trailing stretch spacer.
         self._conv_layout.insertWidget(self._conv_layout.count() - 1, card)
-        # Auto-scroll to bottom so latest turn is visible. Defer one tick so
-        # the layout has finished computing the new content height.
-        def _scroll_to_bottom():
+        # Auto-scroll so the new card is visible. setValue(maximum) is
+        # racy — Qt hasn't finished computing the new max when we ask for
+        # it, even with QTimer(0). Use ensureWidgetVisible() which waits
+        # until the inner widget is laid out, plus a delayed
+        # belt-and-suspenders setValue() to cover the case where the new
+        # card's height grows after the first visibility request.
+        def _scroll_to_card():
+            self.conv_scroll.ensureWidgetVisible(card, 0, 0)
             bar = self.conv_scroll.verticalScrollBar()
             bar.setValue(bar.maximum())
-        QTimer.singleShot(0, _scroll_to_bottom)
+        QTimer.singleShot(0, _scroll_to_card)
+        QTimer.singleShot(80, _scroll_to_card)
 
     def _on_finished_ok(self, msg: str):
         self._append_log(f"✓  Done: {msg}")

@@ -249,6 +249,28 @@ class TaskRunner(QThread):
                 self.failed.emit("cancelled")
                 return
 
+            # Hard reject menu-bar clicks (y<25). The system prompt warns
+            # against this but smaller models (Kimi K2.5, Haiku 4.5) violate
+            # it on Step 1 anyway, opening a macOS dropdown that costs the
+            # whole next turn to dismiss. Cheap to enforce here.
+            if action.get("action") in ("click", "double_click"):
+                yv = action.get("y")
+                if isinstance(yv, (int, float)) and yv < 25:
+                    xv = action.get("x")
+                    self.step_done.emit(step, {
+                        "action": "rejected_menubar_click",
+                        "x": xv, "y": yv,
+                        "reasoning": "runner: y<25 hits the macOS menu bar — rejected.",
+                    })
+                    pending_feedback = (
+                        f"Your click at ({xv},{yv}) was REJECTED — y<25 is the "
+                        "macOS menu bar and clicking there opens a system dropdown. "
+                        "Pick an element INSIDE the app's content area (y≥25). "
+                        "Re-localize from THIS screenshot."
+                    )
+                    time.sleep(_POST_ACTION_DELAY_S)
+                    continue
+
             new_bucket = _click_bucket(action)
             if new_bucket is not None and new_bucket == last_bucket:
                 # Silent suppressor — preserve toggle state. The model gets a

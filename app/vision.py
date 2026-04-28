@@ -7,6 +7,7 @@ import re
 import ssl
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -423,13 +424,36 @@ class VisionClient:
         req = urllib.request.Request(
             API_URL, data=json.dumps(body).encode("utf-8"), headers=headers,
         )
-        try:
-            with urllib.request.urlopen(req, timeout=60, context=_SSL_CTX) as resp:
-                payload = json.loads(resp.read())
-        except urllib.error.HTTPError as e:
-            raise VisionError(f"http {e.code}: {e.read()[:200].decode('utf-8','ignore')}")
-        except Exception as e:
-            raise VisionError(str(e))
+        # Retry transient 429s with exponential backoff. Moonshot's
+        # `engine_overloaded_error` and Anthropic's overloaded_error both
+        # come back as 429 and resolve on their own within seconds-to-tens
+        # of seconds; without a retry one bad moment kills the entire run.
+        backoffs = (2, 6, 18)
+        payload = None
+        last_err: VisionError | None = None
+        for attempt in range(len(backoffs) + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=60, context=_SSL_CTX) as resp:
+                    payload = json.loads(resp.read())
+                break
+            except urllib.error.HTTPError as e:
+                body_bytes = e.read()
+                msg = body_bytes[:300].decode("utf-8", "ignore")
+                last_err = VisionError(f"http {e.code}: {msg}")
+                # Retry on 429 (rate limit / overloaded) and 5xx (server)
+                if e.code == 429 or 500 <= e.code < 600:
+                    if attempt < len(backoffs):
+                        time.sleep(backoffs[attempt])
+                        continue
+                raise last_err
+            except Exception as e:
+                last_err = VisionError(str(e))
+                if attempt < len(backoffs):
+                    time.sleep(backoffs[attempt])
+                    continue
+                raise last_err
+        if payload is None:
+            raise last_err or VisionError("vision call returned no payload")
 
         if PROVIDER == "moonshot":
             text = (payload.get("choices", [{}])[0]
