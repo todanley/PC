@@ -1,5 +1,7 @@
 """Background runner thread: screenshot → vision → action loop."""
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -8,6 +10,27 @@ from PySide6.QtCore import QThread, Signal
 
 from .platform_layer import Input, Screen
 from .vision import VisionClient, VisionError
+
+
+def _find_avfoundation_screen_index() -> str | None:
+    """Return the avfoundation video-device index for `Capture screen 0`,
+    or None if ffmpeg/the device can't be found. Indices vary per machine
+    (3 here, often 1-2 elsewhere) so we discover at run time."""
+    if not shutil.which("ffmpeg"):
+        return None
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+            capture_output=True, timeout=10,
+        )
+    except Exception:
+        return None
+    out = (proc.stderr or b"").decode("utf-8", "ignore")
+    for line in out.splitlines():
+        m = re.search(r"\[(\d+)\]\s+Capture screen 0", line)
+        if m:
+            return m.group(1)
+    return None
 
 
 _FOCUS_APP = os.environ.get("PHANTOM_FOCUS_APP", "")
@@ -89,6 +112,13 @@ class TaskRunner(QThread):
         # we know screen size.
         self._scroll_default_x = 950
         self._scroll_default_y = 600
+        # ffmpeg subprocess that records the entire screen for the duration
+        # of the run; lets us replay what actually happened on screen
+        # afterwards (cursor moves, click landings, layout shifts) and
+        # diagnose mis-localizations. None when recording is disabled or
+        # ffmpeg isn't available.
+        self._recorder: subprocess.Popen | None = None
+        self._recorder_path: str | None = None
 
     def cancel(self):
         self._cancel = True
@@ -96,7 +126,71 @@ class TaskRunner(QThread):
     def _shot_path(self, step: int) -> str:
         return os.path.join(self._tmpdir, f"step_{step:02d}.png")
 
+    def _start_recorder(self) -> str | None:
+        """Start ffmpeg recording the screen to <rundir>/screen.mp4.
+        Returns the file path on success, None on any failure (which is
+        non-fatal — the run continues without a recording)."""
+        if os.environ.get("PHANTOM_RECORD", "1") == "0":
+            return None
+        idx = _find_avfoundation_screen_index()
+        if idx is None:
+            return None
+        path = os.path.join(self._tmpdir, "screen.mp4")
+        try:
+            self._recorder = subprocess.Popen(
+                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 "-f", "avfoundation",
+                 "-framerate", "10",
+                 "-capture_cursor", "1",
+                 "-i", f"{idx}:none",
+                 "-vcodec", "libx264",
+                 "-preset", "ultrafast",
+                 "-pix_fmt", "yuv420p",
+                 path],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            return None
+        self._recorder_path = path
+        return path
+
+    def _stop_recorder(self):
+        if not self._recorder:
+            return
+        # Send 'q' to ffmpeg's stdin so it finalizes the MP4 cleanly. Fall
+        # back to terminate/kill if it's unresponsive — better to lose the
+        # last second than leave a zombie process.
+        try:
+            self._recorder.communicate(input=b"q", timeout=8)
+        except subprocess.TimeoutExpired:
+            try:
+                self._recorder.terminate()
+                self._recorder.wait(timeout=3)
+            except Exception:
+                try:
+                    self._recorder.kill()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self._recorder = None
+
     def run(self):
+        # Start full-screen recording first so even setup failures get
+        # captured — helpful when diagnosing "the app didn't even open".
+        rec_path = self._start_recorder()
+        if rec_path:
+            self.step_started.emit(0, f"📹 Recording → {rec_path}")
+        try:
+            self._run_inner()
+        finally:
+            self._stop_recorder()
+            if self._recorder_path:
+                self.step_started.emit(0, f"📹 Saved → {self._recorder_path}")
+
+    def _run_inner(self):
         try:
             screen = Screen()
             inp = Input()
