@@ -40,26 +40,33 @@ ANTHROPIC_VERSION = "2023-06-01"
 #   Kimi K2.5 is OpenAI-compatible, ~25x cheaper than Claude Opus on input,
 #   and natively multimodal. Set PHANTOM_MODEL=kimi-k2.5 (or kimi-k2.6) and
 #   ANTHROPIC_API_KEY=<your moonshot key> (key env name kept for simplicity).
-# - gemini    (for gemini-*): no HTTP API key — drives gemini.google.com via
-#   the Playwright-based CLI at ~/.claude/tools/gemini.py using the user's
-#   logged-in Chrome cookies. Free under the user's existing Gemini Pro
-#   subscription. Slower (~30-60s/turn) and the Chromium window pops up
-#   during each call, but no API quota / 429s.
+# - gemini    (for gemini-*, when GEMINI_API_KEY is NOT set): no HTTP API
+#   key — drives gemini.google.com via the Playwright-based CLI at
+#   ~/.claude/tools/gemini.py using the user's logged-in Chrome cookies.
+#   Free under the user's Gemini Pro subscription. Slower (~30-60s/turn)
+#   and the Chromium window pops up.
+# - google    (for gemini-*, when GEMINI_API_KEY IS set): Google AI Studio
+#   REST API via OpenAI-compatible endpoint. ~$0.10/$0.40 per M tokens on
+#   gemini-2.5-flash-lite, fast (~3-5s/turn), no Chromium pop-up.
 def _provider() -> str:
     p = os.environ.get("PHANTOM_PROVIDER", "").lower()
-    if p in ("anthropic", "moonshot", "gemini"):
+    if p in ("anthropic", "moonshot", "gemini", "google"):
         return p
     if MODEL.startswith(("kimi-", "moonshot-")):
         return "moonshot"
     if MODEL.startswith("gemini"):
+        # Default to API if a key is provided, else fall back to the
+        # Playwright/subscription path so existing setups keep working.
+        if os.environ.get("GEMINI_API_KEY"):
+            return "google"
         return "gemini"
     return "anthropic"
 
 PROVIDER = _provider()
-API_URL = (
-    "https://api.moonshot.ai/v1/chat/completions" if PROVIDER == "moonshot"
-    else "https://api.anthropic.com/v1/messages"
-)
+API_URL = {
+    "moonshot": "https://api.moonshot.ai/v1/chat/completions",
+    "google":   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+}.get(PROVIDER, "https://api.anthropic.com/v1/messages")
 # Path to the Gemini CLI tool (only used when PROVIDER == "gemini").
 GEMINI_CLI = os.path.expanduser(
     os.environ.get("PHANTOM_GEMINI_CLI", "~/.claude/tools/gemini.py")
@@ -170,12 +177,19 @@ class VisionClient:
 
     def __init__(self, task: str, screen_size, api_key: str = None):
         self.task = task
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        # Gemini provider uses the user's browser session — no API key needed.
-        if PROVIDER != "gemini" and not self.api_key:
-            raise VisionError("ANTHROPIC_API_KEY not set")
-        if PROVIDER == "gemini" and not os.path.exists(GEMINI_CLI):
-            raise VisionError(f"Gemini CLI not found at {GEMINI_CLI}")
+        # Per-provider key resolution. The legacy ANTHROPIC_API_KEY env name
+        # is reused for moonshot/anthropic for backwards-compat with existing
+        # launchers; google uses its own GEMINI_API_KEY so both can coexist.
+        if PROVIDER == "google":
+            self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        else:
+            self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if PROVIDER == "gemini":
+            if not os.path.exists(GEMINI_CLI):
+                raise VisionError(f"Gemini CLI not found at {GEMINI_CLI}")
+        elif not self.api_key:
+            key_name = "GEMINI_API_KEY" if PROVIDER == "google" else "ANTHROPIC_API_KEY"
+            raise VisionError(f"{key_name} not set")
         plat, primary_mod = _platform_strings()
         self.logical_w, self.logical_h = screen_size
         self._last_progress: str = ""  # echoed back to the model each turn
@@ -210,7 +224,7 @@ class VisionClient:
                 "by the OS pixel dimensions automatically — do NOT output raw pixel coordinates "
                 "and do NOT include any unit."
             )
-        elif PROVIDER == "gemini":
+        elif PROVIDER in ("gemini", "google"):
             # Gemini's vision tower returns spatially-grounded answers in
             # normalized 0-1000 ymin,xmin,ymax,xmax tuples by default. For
             # JSON action output, pin to normalized 0-1 fractions like Kimi —
@@ -370,7 +384,7 @@ class VisionClient:
             # No history accumulation for Gemini (fresh browser each call).
             return action
 
-        if PROVIDER == "moonshot":
+        if PROVIDER in ("moonshot", "google"):
             # OpenAI-compatible: image_url with data: URI, system as message.
             new_user_msg = {
                 "role": "user",
@@ -388,13 +402,14 @@ class VisionClient:
             body = {
                 "model": MODEL,
                 "max_tokens": 512,
-                # K2.5/K2.6 default to thinking-mode which puts chain-of-thought
-                # into `reasoning_content` and leaves `content` empty until the
-                # thinking finishes — burns through max_tokens before producing
-                # the JSON action. Disable for direct output.
-                "thinking": {"type": "disabled"},
                 "messages": messages,
             }
+            if PROVIDER == "moonshot":
+                # K2.5/K2.6 default to thinking-mode which puts chain-of-
+                # thought into `reasoning_content` and leaves `content`
+                # empty until the thinking finishes — burns through
+                # max_tokens before producing the JSON action.
+                body["thinking"] = {"type": "disabled"}
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
@@ -455,7 +470,7 @@ class VisionClient:
         if payload is None:
             raise last_err or VisionError("vision call returned no payload")
 
-        if PROVIDER == "moonshot":
+        if PROVIDER in ("moonshot", "google"):
             text = (payload.get("choices", [{}])[0]
                           .get("message", {})
                           .get("content", "") or "").strip()
@@ -496,7 +511,7 @@ class VisionClient:
         #    0-1 fractions; multiply by logical dims. We also clamp to OS
         #    bounds because Kimi occasionally drifts to pixel-space — if a
         #    value is > 1.5 we treat it as already-pixel and pass through.
-        if PROVIDER == "moonshot":
+        if PROVIDER in ("moonshot", "google"):
             for k, dim in (("x", self.logical_w), ("y", self.logical_h)):
                 v = action.get(k)
                 if not isinstance(v, (int, float)):
@@ -523,7 +538,7 @@ class VisionClient:
         # long tasks). OpenAI-style providers prefer plain strings for
         # text-only content.
         action_json = json.dumps(action, ensure_ascii=False)
-        if PROVIDER == "moonshot":
+        if PROVIDER in ("moonshot", "google"):
             self.history.append({"role": "user",
                                  "content": "[screenshot omitted] " + user_text})
             self.history.append({"role": "assistant", "content": action_json})
