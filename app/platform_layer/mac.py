@@ -7,6 +7,10 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
+import math  # noqa: E402
+
+import Quartz  # noqa: E402
+
 from phantom import PhantomInput, PhantomScreen  # noqa: E402
 
 _KEYMAP = {
@@ -32,6 +36,17 @@ class Input:
 
     def click(self, x: float, y: float):
         self._pi.click(x, y)
+
+    def move_to(self, x: float, y: float):
+        """Smooth-move the cursor to (x, y) without clicking. Used by the
+        debug 'replay move' button so the user can visually verify the
+        AI-returned coords land on the right element."""
+        loc = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+        self._pi._current_x = float(loc.x)
+        self._pi._current_y = float(loc.y)
+        dist = math.hypot(x - self._pi._current_x, y - self._pi._current_y)
+        duration = min(0.8, max(0.15, dist / 1500))
+        self._pi.move_to(float(x), float(y), duration=duration)
 
     def double_click(self, x: float, y: float):
         self._pi.double_click(x, y)

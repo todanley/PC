@@ -1,5 +1,6 @@
 """PySide6 UI for Phantom-Click."""
 import json
+import threading
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QPixmap
@@ -9,7 +10,21 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from .platform_layer import Input
 from .runner import TaskRunner
+
+
+def _replay_move_to(x: float, y: float):
+    """Smooth-move the cursor to (x, y) on a background thread so the Qt
+    main thread stays responsive while the bezier animation plays.
+    No click — debug-only verification of AI-returned coordinates."""
+    def go():
+        try:
+            Input().move_to(float(x), float(y))
+        except Exception:
+            # Silent — this is debug aid; failures shouldn't crash the UI.
+            pass
+    threading.Thread(target=go, daemon=True).start()
 
 
 DARK_QSS = """
@@ -35,6 +50,13 @@ QPushButton#linkBtn {
     font-weight: 500; font-size: 12px; text-align: left;
 }
 QPushButton#linkBtn:hover { color: #a8baff; }
+QPushButton#replayBtn {
+    background: #2a2f38; color: #c9cdd4; border: 1px solid #3a3f48;
+    border-radius: 6px; padding: 6px 12px; font-weight: 500; font-size: 11px;
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+}
+QPushButton#replayBtn:hover { background: #353b46; color: #e6e8eb; }
+QPushButton#replayBtn:pressed { background: #1f242c; }
 QListWidget {
     background: #1a1d23; border: 1px solid #2a2f38; border-radius: 8px;
     padding: 6px; color: #c9cdd4; font-family: "SF Mono", Menlo, Consolas, monospace;
@@ -108,6 +130,7 @@ class _TurnCard(QFrame):
         v.addWidget(rlabel)
         # Prefer pretty-printed JSON if the action parses; else show raw text.
         resp = payload.get("response_text", "")
+        parsed = None
         try:
             parsed = json.loads(resp)
             resp_pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
@@ -118,6 +141,25 @@ class _TurnCard(QFrame):
         rtext.setWordWrap(True)
         rtext.setTextInteractionFlags(Qt.TextSelectableByMouse)
         v.addWidget(rtext)
+
+        # Debug aid: when the model emitted a click, show a button that
+        # smooth-moves the real cursor to (x, y) so the user can visually
+        # verify whether the AI-returned coords actually land on the
+        # intended element. Move only — no click — to avoid mutating UI
+        # state while debugging.
+        if isinstance(parsed, dict) and parsed.get("action") in ("click", "double_click"):
+            x = parsed.get("x")
+            y = parsed.get("y")
+            if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                row = QHBoxLayout()
+                row.setContentsMargins(0, 0, 0, 0)
+                btn = QPushButton(f"▶  Replay move to ({x}, {y})")
+                btn.setObjectName("replayBtn")
+                btn.setCursor(Qt.PointingHandCursor)
+                btn.clicked.connect(lambda _=False, X=x, Y=y: _replay_move_to(X, Y))
+                row.addWidget(btn)
+                row.addStretch(1)
+                v.addLayout(row)
 
 
 class MainWindow(QMainWindow):

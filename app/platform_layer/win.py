@@ -23,6 +23,9 @@ class Input:
         pyautogui.moveTo(x, y, duration=0.35)
         pyautogui.click()
 
+    def move_to(self, x: float, y: float):
+        pyautogui.moveTo(x, y, duration=0.35)
+
     def double_click(self, x: float, y: float):
         pyautogui.moveTo(x, y, duration=0.35)
         pyautogui.doubleClick()
