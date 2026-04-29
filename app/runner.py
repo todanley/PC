@@ -6,10 +6,50 @@ import subprocess
 import tempfile
 import time
 
+import numpy as np
+from PIL import Image, ImageChops
 from PySide6.QtCore import QThread, Signal
 
 from .platform_layer import Input, Screen
 from .vision import VisionClient, VisionError
+
+
+def _click_was_noop(before_path: str, after_path: str,
+                    cx: float, cy: float,
+                    screen_size: tuple[int, int],
+                    half_win: int = 90,
+                    diff_threshold: float = 4.0) -> bool:
+    """Compare a 2*half_win square centered on the click point in the
+    before/after screenshots. Return True when the region is essentially
+    unchanged — strong signal the click missed its target / hit dead area /
+    bounced off a non-clickable element. False when the region clearly
+    changed (button toggled, modal opened, etc.).
+
+    Cropping at the click point isolates us from confounding changes
+    elsewhere on screen (e.g. Douyin's autoplay advancing the feed even
+    when the click does nothing) — an issue that would defeat full-image
+    comparison. We measure mean per-pixel absolute RGB delta; threshold
+    set empirically (4 / 255 ≈ JPEG / cursor-render noise floor).
+    """
+    try:
+        a = Image.open(before_path).convert("RGB")
+        b = Image.open(after_path).convert("RGB")
+    except Exception:
+        return False
+    if a.size != b.size:
+        return False
+    logical_w, logical_h = screen_size
+    sx = a.width / max(1, logical_w)
+    sy = a.height / max(1, logical_h)
+    px = round(cx * sx)
+    py = round(cy * sy)
+    box = (max(0, px - half_win), max(0, py - half_win),
+           min(a.width, px + half_win), min(a.height, py + half_win))
+    if box[2] - box[0] < 4 or box[3] - box[1] < 4:
+        return False
+    diff = ImageChops.difference(a.crop(box), b.crop(box))
+    mean = float(np.asarray(diff, dtype=np.uint8).mean())
+    return mean < diff_threshold
 
 
 def _find_avfoundation_screen_index() -> str | None:
@@ -344,6 +384,38 @@ class TaskRunner(QThread):
             # Pause so click effects (animations, modals, like-count updates)
             # fully render before the next screenshot.
             time.sleep(_POST_ACTION_DELAY_S)
+
+            # Click-effect verification: when the model just clicked, take
+            # a fresh screenshot and compare a region around the click point
+            # to the pre-click image. If the region is essentially unchanged
+            # we know the click did nothing (missed the target / hit dead
+            # space) and feed that back so the model re-localizes instead of
+            # blindly incrementing its `progress` counter on a phantom
+            # success. Verify image is reused as the next turn's input — no
+            # extra screen capture.
+            if action.get("action") in ("click", "double_click"):
+                cx, cy = action.get("x"), action.get("y")
+                if isinstance(cx, (int, float)) and isinstance(cy, (int, float)):
+                    verify_path = os.path.join(self._tmpdir,
+                                               f"verify_{step:02d}.png")
+                    try:
+                        screen.capture(verify_path)
+                    except Exception:
+                        verify_path = None
+                    if verify_path and _click_was_noop(
+                        shot, verify_path, cx, cy, (sw, sh)
+                    ):
+                        pending_feedback = (
+                            f"Your click at ({cx},{cy}) had NO visible effect — "
+                            "the area around that point looks identical before "
+                            "and after the click. The element you targeted "
+                            "wasn't actually clickable (or you missed it). DO "
+                            "NOT increment any progress counter for this "
+                            "attempt — the action did not happen. Re-localize "
+                            "from the next screenshot and try a DIFFERENT "
+                            "coordinate — usually the correct target is a few "
+                            "tens of pixels off from where you guessed."
+                        )
 
     def _dispatch(self, inp: Input, action: dict):
         act = action.get("action")
