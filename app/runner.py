@@ -432,13 +432,6 @@ class TaskRunner(QThread):
                 return
             inp.double_click(x, y)
         elif act == "type":
-            # Computer Use's type_text_at carries x,y for the field to focus.
-            # Click first to focus, then type. When x/y are absent we just
-            # type into whatever already has focus (older provider shape).
-            x, y = action.get("x"), action.get("y")
-            if isinstance(x, (int, float)) and isinstance(y, (int, float)):
-                inp.click(x, y)
-                time.sleep(0.1)
             inp.type_text(action.get("text", ""))
         elif act == "key":
             inp.press_combo(action.get("key", ""))
