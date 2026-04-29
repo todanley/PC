@@ -32,12 +32,12 @@ QMainWindow, QWidget { background: #0f1115; color: #e6e8eb; }
 QLabel { color: #e6e8eb; }
 QPlainTextEdit {
     background: #1a1d23; border: 1px solid #2a2f38; border-radius: 8px;
-    padding: 10px; color: #e6e8eb; font-size: 14px;
+    padding: 10px; color: #e6e8eb; font-size: 18px;
 }
 QPlainTextEdit:focus { border: 1px solid #5a8dff; }
 QPushButton {
     background: #5a8dff; color: white; border: none; border-radius: 8px;
-    padding: 10px 22px; font-weight: 600; font-size: 14px;
+    padding: 10px 22px; font-weight: 600; font-size: 18px;
 }
 QPushButton:hover { background: #6a9aff; }
 QPushButton:pressed { background: #4a7def; }
@@ -47,12 +47,12 @@ QPushButton#stopBtn:hover { background: #3a3f48; }
 QPushButton#stopBtn:disabled { background: #1a1d23; color: #4b5160; }
 QPushButton#linkBtn {
     background: transparent; color: #8ba3ff; padding: 4px 0;
-    font-weight: 500; font-size: 12px; text-align: left;
+    font-weight: 500; font-size: 16px; text-align: left;
 }
 QPushButton#linkBtn:hover { color: #a8baff; }
 QPushButton#replayBtn {
     background: #2a2f38; color: #c9cdd4; border: 1px solid #3a3f48;
-    border-radius: 6px; padding: 6px 12px; font-weight: 500; font-size: 11px;
+    border-radius: 6px; padding: 6px 12px; font-weight: 500; font-size: 14px;
     font-family: "SF Mono", Menlo, Consolas, monospace;
 }
 QPushButton#replayBtn:hover { background: #353b46; color: #e6e8eb; }
@@ -60,16 +60,16 @@ QPushButton#replayBtn:pressed { background: #1f242c; }
 QListWidget {
     background: #1a1d23; border: 1px solid #2a2f38; border-radius: 8px;
     padding: 6px; color: #c9cdd4; font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 12px;
+    font-size: 16px;
 }
 QFrame#turnCard {
     background: #1a1d23; border: 1px solid #2a2f38; border-radius: 8px;
 }
-QLabel#turnHeader { color: #8b9099; font-size: 11px; font-weight: 600; }
-QLabel#sectionLabel { color: #8b9099; font-size: 10px; font-weight: 600; }
+QLabel#turnHeader { color: #8b9099; font-size: 14px; font-weight: 600; }
+QLabel#sectionLabel { color: #8b9099; font-size: 13px; font-weight: 600; }
 QLabel#monoText {
     color: #c9cdd4; font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 11px; background: #0f1115; padding: 6px; border-radius: 4px;
+    font-size: 14px; background: #0f1115; padding: 6px; border-radius: 4px;
 }
 QScrollArea { background: #0f1115; border: none; }
 """
@@ -179,11 +179,11 @@ class MainWindow(QMainWindow):
 
         # Title
         title = QLabel("Phantom-Click")
-        title.setFont(QFont("", 22, QFont.Bold))
+        title.setFont(QFont("", 29, QFont.Bold))
         layout.addWidget(title)
 
         sub = QLabel("Tell me what to do, I'll take over your screen.")
-        sub.setStyleSheet("color: #8b9099; font-size: 13px;")
+        sub.setStyleSheet("color: #8b9099; font-size: 17px;")
         layout.addWidget(sub)
 
         layout.addSpacing(6)
@@ -235,7 +235,7 @@ class MainWindow(QMainWindow):
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(6)
         log_label = QLabel("Activity")
-        log_label.setStyleSheet("color: #8b9099; font-size: 12px;")
+        log_label.setStyleSheet("color: #8b9099; font-size: 16px;")
         lv.addWidget(log_label)
         self.log = QListWidget()
         lv.addWidget(self.log, stretch=1)
@@ -247,7 +247,7 @@ class MainWindow(QMainWindow):
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(6)
         conv_label = QLabel("Conversation")
-        conv_label.setStyleSheet("color: #8b9099; font-size: 12px;")
+        conv_label.setStyleSheet("color: #8b9099; font-size: 16px;")
         rv.addWidget(conv_label)
         self.conv_scroll = QScrollArea()
         self.conv_scroll.setWidgetResizable(True)

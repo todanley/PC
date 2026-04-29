@@ -28,7 +28,6 @@ _MAX_BYTES = 4_500_000
 # the model has enough pixels for small UI targets like Douyin's 已关注
 # buttons or back arrows. JPEG encoder still falls back to a smaller size
 # if the file would exceed the API's per-image byte cap.
-_MAX_EDGE = int(os.environ.get("PHANTOM_MAX_EDGE", "3456"))
 _JPEG_QUALITY = int(os.environ.get("PHANTOM_JPEG_QUALITY", "75"))
 
 MODEL = os.environ.get("PHANTOM_MODEL", "claude-opus-4-7")
@@ -193,38 +192,40 @@ class VisionClient:
         plat, primary_mod = _platform_strings()
         self.logical_w, self.logical_h = screen_size
         self._last_progress: str = ""  # echoed back to the model each turn
-        # Downsample: long edge capped at _MAX_EDGE for token cost. Coord
-        # convention is provider-specific (verified empirically):
-        #   - Anthropic Opus 4.7: returns coords in IMAGE space accurately;
-        #     runner scales up by 1/scale before dispatch.
-        #   - Moonshot Kimi K2.5: ignores the image-space instruction in
-        #     complex UI screenshots and returns coords in OS-logical space
-        #     directly (UI-automation training prior). Runner DOES NOT scale.
-        # The screencapture is at retina (~2x logical on macOS). Scale is
-        # measured against retina, not logical, so PHANTOM_MAX_EDGE >= retina
-        # means "send the screenshot as-is" (no downsample). Coord arithmetic
-        # still uses logical dims for click dispatch.
-        retina_w, retina_h = self.logical_w * 2, self.logical_h * 2
-        self.scale_from_retina = min(1.0, _MAX_EDGE / max(retina_w, retina_h))
-        self.image_w = max(1, round(retina_w * self.scale_from_retina))
-        self.image_h = max(1, round(retina_h * self.scale_from_retina))
-        # `self.scale` still reports image-edge / logical-edge (the older
-        # variable used by the Anthropic coord-scale-up path).
-        self.scale = self.image_w / self.logical_w
-        # Same coord convention for every provider: integer pixel coords
-        # in IMAGE space. The model sees a {W}x{H} image and reports pixel
-        # positions inside it; the runner divides by `self.scale` to get
-        # OS-logical click coords. No 0-1 normalization — the extra
-        # division step costs the model precision in token space.
+        # No downsampling — the screencapture is sent at its native resolution
+        # so the model gets every pixel of the UI. Image dimensions equal
+        # logical screen dimensions (true on 1x displays; on Retina the
+        # screencapture is 2x and this needs revisiting). Coord pipeline:
+        # model returns x/y in image-pixel space, runner divides by self.scale
+        # (= 1.0 here) to get OS click-space — i.e. pass-through.
+        self.image_w = self.logical_w
+        self.image_h = self.logical_h
+        self.scale = 1.0
         prompt_w, prompt_h = self.image_w, self.image_h
-        coord_instructions = (
-            f"All x/y coordinates you output are integer PIXEL positions in "
-            f"this {prompt_w}x{prompt_h} image. (0, 0) is the top-left pixel; "
-            f"({prompt_w}, {prompt_h}) is the bottom-right. Measure them off "
-            "the image directly, the same way you'd describe pixel positions "
-            "in any picture. The runner converts them to OS click-space "
-            "automatically — you don't need to. Output integers, not fractions."
-        )
+        # Gemini's spatial training uses a 0-1000 normalized grid (per Google's
+        # image-understanding docs); fighting that convention with "use pixel
+        # coords" instructions degraded localization noticeably. Anthropic /
+        # Moonshot localize directly in pixel space. Match the prompt to each
+        # family's native convention; the runner converts back to OS pixels.
+        if PROVIDER in ("google", "gemini"):
+            coord_instructions = (
+                "All x/y coordinates you output are NORMALIZED to a 0-1000 "
+                "grid: x is 0 at the left edge, 1000 at the right edge; y is "
+                "0 at the top, 1000 at the bottom — REGARDLESS of the actual "
+                f"image's {prompt_w}x{prompt_h} pixel size. This matches "
+                "Gemini's spatial-understanding convention. Output integers "
+                "in [0, 1000]. The runner converts them to OS click-space "
+                "automatically."
+            )
+        else:
+            coord_instructions = (
+                f"All x/y coordinates you output are integer PIXEL positions in "
+                f"this {prompt_w}x{prompt_h} image. (0, 0) is the top-left pixel; "
+                f"({prompt_w}, {prompt_h}) is the bottom-right. Measure them off "
+                "the image directly, the same way you'd describe pixel positions "
+                "in any picture. The runner converts them to OS click-space "
+                "automatically — you don't need to. Output integers, not fractions."
+            )
         self.system = SYSTEM_PROMPT.format(
             platform_name=plat, width=prompt_w, height=prompt_h,
             primary_mod=primary_mod, coord_instructions=coord_instructions,
@@ -243,12 +244,36 @@ class VisionClient:
         self.history = []  # list of {"role": ..., "content": ...}
         self.last_turn: dict | None = None  # populated each next_action() call
 
+    def _to_logical_xy(self, action: dict) -> None:
+        """Map the model's reported x/y into OS-logical click coordinates,
+        in-place. Three conventions to handle:
+          • Gemini family: 0-1000 normalized → multiply by image_dim/1000.
+          • Stray fraction (≤ 1.5) from any provider: treat as 0-1 → multiply
+            by logical_dim. Belt-and-suspenders.
+          • Anthropic / Moonshot: pixel coords in image space → divide by
+            self.scale (= image_w / logical_w) to get logical pixels.
+        Result is clamped to [0, dim - 1]."""
+        gemini_norm = PROVIDER in ("google", "gemini")
+        for k, logical_dim, image_dim in (
+            ("x", self.logical_w, self.image_w),
+            ("y", self.logical_h, self.image_h),
+        ):
+            v = action.get(k)
+            if not isinstance(v, (int, float)):
+                continue
+            if 0 <= v <= 1.5:
+                px = round(v * logical_dim)
+            elif gemini_norm:
+                px = round(v / 1000 * image_dim / self.scale)
+            else:
+                px = round(v / self.scale)
+            action[k] = max(0, min(logical_dim - 1, px))
+
     def _encode_image(self, screenshot_path: str) -> tuple[str, str]:
-        """Resize screenshot to the downsampled (image_w x image_h) target and
-        encode as JPEG. Returns (base64_data, media_type)."""
+        """Encode the raw screencapture as JPEG without resizing. Steps down
+        JPEG quality if the encoded bytes would exceed the per-image cap, but
+        never drops resolution. Returns (base64_data, media_type)."""
         img = Image.open(screenshot_path)
-        if img.size != (self.image_w, self.image_h):
-            img = img.resize((self.image_w, self.image_h), Image.LANCZOS)
         rgb = img.convert("RGB")
         for quality in (_JPEG_QUALITY, 65, 55, 45):
             buf = io.BytesIO()
@@ -256,19 +281,10 @@ class VisionClient:
             data = buf.getvalue()
             if len(data) <= _MAX_BYTES:
                 return base64.b64encode(data).decode("ascii"), "image/jpeg"
-        # Last resort: shrink dimensions further (rare — only triggers for huge
-        # logical resolutions where even quality=45 at the cap is over 5MB).
-        s = 0.75
-        while s > 0.25:
-            w = max(1, int(self.image_w * s))
-            h = max(1, int(self.image_h * s))
-            buf = io.BytesIO()
-            rgb.resize((w, h), Image.LANCZOS).save(buf, format="JPEG", quality=55, optimize=True)
-            data = buf.getvalue()
-            if len(data) <= _MAX_BYTES:
-                return base64.b64encode(data).decode("ascii"), "image/jpeg"
-            s -= 0.15
-        raise VisionError("could not compress screenshot under 5MB")
+        raise VisionError(
+            f"raw screenshot exceeds {_MAX_BYTES} bytes even at JPEG q=45 — "
+            "raise PHANTOM_JPEG_QUALITY threshold or re-introduce downsampling."
+        )
 
     def next_action(self, screenshot_path: str, feedback: str | None = None) -> dict:
         b64, media_type = self._encode_image(screenshot_path)
@@ -349,19 +365,7 @@ class VisionClient:
             action = _lenient_json_loads(m.group())
             if action is None:
                 raise VisionError(f"invalid JSON: {m.group()[:200]}")
-            # Same image-pixel convention as the rest: divide by self.scale
-            # (retina) to get OS-logical pixels; treat ≤1.5 as a stray
-            # fraction.
-            for k, logical_dim in (("x", self.logical_w),
-                                   ("y", self.logical_h)):
-                v = action.get(k)
-                if not isinstance(v, (int, float)):
-                    continue
-                if 0 <= v <= 1.5:
-                    action[k] = round(v * logical_dim)
-                else:
-                    action[k] = max(0, min(logical_dim - 1,
-                                           round(v / self.scale)))
+            self._to_logical_xy(action)
             prog = action.get("progress")
             if isinstance(prog, str) and prog.strip():
                 self._last_progress = prog.strip()
@@ -383,16 +387,19 @@ class VisionClient:
                 + self.history
                 + [new_user_msg]
             )
-            body = {
-                "model": MODEL,
-                "max_tokens": 512,
-                "messages": messages,
-            }
+            # max_tokens omitted: OpenAI-compat endpoints treat it as optional
+            # and fall back to the model's full output ceiling. We previously
+            # capped at 4096 as cost control, but thinking-mode models
+            # (Gemini 3.x Pro, Kimi K2.5) burn the budget on hidden reasoning
+            # tokens and the visible JSON gets cut mid-string. Letting the
+            # provider's default kick in trades a slightly fuzzier per-call
+            # cost for reliable completion.
+            body = {"model": MODEL, "messages": messages}
             if PROVIDER == "moonshot":
                 # K2.5/K2.6 default to thinking-mode which puts chain-of-
                 # thought into `reasoning_content` and leaves `content`
-                # empty until the thinking finishes — burns through
-                # max_tokens before producing the JSON action.
+                # empty until the thinking finishes — and even uncapped, the
+                # extra latency hurts. Disable.
                 body["thinking"] = {"type": "disabled"}
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
@@ -410,7 +417,10 @@ class VisionClient:
                 ],
             }
             messages = self.history + [new_user_msg]
-            body = {"model": MODEL, "max_tokens": 512,
+            # Anthropic requires max_tokens (unlike OpenAI-compat) so we keep
+            # it, set to the largest value Claude 4.x accepts. Effectively
+            # uncapped for our use (action JSONs are < 1KB).
+            body = {"model": MODEL, "max_tokens": 32000,
                     "system": self.system, "messages": messages}
             headers = {"anthropic-version": ANTHROPIC_VERSION,
                        "content-type": "application/json"}
@@ -455,9 +465,17 @@ class VisionClient:
             raise last_err or VisionError("vision call returned no payload")
 
         if PROVIDER in ("moonshot", "google"):
-            text = (payload.get("choices", [{}])[0]
-                          .get("message", {})
-                          .get("content", "") or "").strip()
+            choice0 = payload.get("choices", [{}])[0]
+            text = (choice0.get("message", {}).get("content", "") or "").strip()
+            # Surface truncation explicitly: when finish_reason=="length" the
+            # JSON is cut mid-stream and `_lenient_json_loads` would silently
+            # fail with "no JSON in response". Better to point at the cause.
+            if choice0.get("finish_reason") == "length" and not text.rstrip().endswith("}"):
+                raise VisionError(
+                    f"response truncated (finish_reason=length) — provider's "
+                    f"per-model output ceiling was reached. Got {len(text)} "
+                    f"chars. Partial: {text[:200]}"
+                )
         else:
             text = "".join(
                 c.get("text", "") for c in payload.get("content", []) if c.get("type") == "text"
@@ -488,20 +506,7 @@ class VisionClient:
         if action is None:
             raise VisionError(f"invalid JSON: {m.group()[:200]}")
 
-        # Map the model's image-pixel coords back to logical OS pixels.
-        # scale = image_edge / logical_edge, so dividing converts. (For a
-        # retina screenshot at 2x, scale=2 and we halve.) Belt-and-suspenders
-        # 0-1 fallback: if the model accidentally outputs a fraction (≤ 1.5)
-        # we treat it as such and multiply by the OS dimension instead.
-        for k, logical_dim in (("x", self.logical_w), ("y", self.logical_h)):
-            v = action.get(k)
-            if not isinstance(v, (int, float)):
-                continue
-            if 0 <= v <= 1.5:
-                action[k] = round(v * logical_dim)
-            else:
-                action[k] = max(0, min(logical_dim - 1,
-                                       round(v / self.scale)))
+        self._to_logical_xy(action)
 
         # Capture the model's running progress for echo on next turn.
         prog = action.get("progress")
