@@ -211,40 +211,20 @@ class VisionClient:
         # `self.scale` still reports image-edge / logical-edge (the older
         # variable used by the Anthropic coord-scale-up path).
         self.scale = self.image_w / self.logical_w
-        if PROVIDER == "moonshot":
-            # Kimi K2.5 is unreliable about pixel-space coords on real UI
-            # screenshots — returns mixed conventions (image-px vs OS-px vs
-            # 0-1 fractions). Force a normalized 0.000-1.000 frame: it's
-            # unambiguous and we multiply by logical dims after parsing.
-            prompt_w, prompt_h = self.image_w, self.image_h
-            coord_instructions = (
-                "All x/y coordinates you output are NORMALIZED FRACTIONS in [0, 1]: "
-                "(x=0, y=0) is the top-left of the screen, (x=1, y=1) is the bottom-right. "
-                "Use up to 3 decimal places (e.g. 0.815). The runner multiplies your fractions "
-                "by the OS pixel dimensions automatically — do NOT output raw pixel coordinates "
-                "and do NOT include any unit."
-            )
-        elif PROVIDER in ("gemini", "google"):
-            # Gemini's vision tower returns spatially-grounded answers in
-            # normalized 0-1000 ymin,xmin,ymax,xmax tuples by default. For
-            # JSON action output, pin to normalized 0-1 fractions like Kimi —
-            # the cleanest convention to translate to clicks.
-            prompt_w, prompt_h = self.image_w, self.image_h
-            coord_instructions = (
-                "All x/y coordinates you output are NORMALIZED FRACTIONS in [0, 1]: "
-                "(x=0, y=0) is the top-left of the screen, (x=1, y=1) is the bottom-right. "
-                "Use up to 3 decimal places (e.g. 0.815). The runner multiplies your fractions "
-                "by the OS pixel dimensions automatically — do NOT output raw pixel coordinates "
-                "and do NOT include any unit."
-            )
-        else:
-            prompt_w, prompt_h = self.image_w, self.image_h
-            coord_instructions = (
-                f"All x/y coordinates you output are in this {prompt_w}x{prompt_h} IMAGE pixel "
-                "space — measure them off the image directly, the same way you'd describe pixel "
-                "positions in any picture. The runner converts them to OS click-space automatically; "
-                "you don't need to think about that."
-            )
+        # Same coord convention for every provider: integer pixel coords
+        # in IMAGE space. The model sees a {W}x{H} image and reports pixel
+        # positions inside it; the runner divides by `self.scale` to get
+        # OS-logical click coords. No 0-1 normalization — the extra
+        # division step costs the model precision in token space.
+        prompt_w, prompt_h = self.image_w, self.image_h
+        coord_instructions = (
+            f"All x/y coordinates you output are integer PIXEL positions in "
+            f"this {prompt_w}x{prompt_h} image. (0, 0) is the top-left pixel; "
+            f"({prompt_w}, {prompt_h}) is the bottom-right. Measure them off "
+            "the image directly, the same way you'd describe pixel positions "
+            "in any picture. The runner converts them to OS click-space "
+            "automatically — you don't need to. Output integers, not fractions."
+        )
         self.system = SYSTEM_PROMPT.format(
             platform_name=plat, width=prompt_w, height=prompt_h,
             primary_mod=primary_mod, coord_instructions=coord_instructions,
@@ -504,30 +484,20 @@ class VisionClient:
         if action is None:
             raise VisionError(f"invalid JSON: {m.group()[:200]}")
 
-        # Coord normalization, provider-specific:
-        #  - Anthropic: model returns IMAGE-pixel coords; scale up by 1/scale
-        #    to logical OS pixels.
-        #  - Moonshot/Kimi: prompt instructs the model to output normalized
-        #    0-1 fractions; multiply by logical dims. We also clamp to OS
-        #    bounds because Kimi occasionally drifts to pixel-space — if a
-        #    value is > 1.5 we treat it as already-pixel and pass through.
-        if PROVIDER in ("moonshot", "google"):
-            for k, dim in (("x", self.logical_w), ("y", self.logical_h)):
-                v = action.get(k)
-                if not isinstance(v, (int, float)):
-                    continue
-                if 0 <= v <= 1.5:
-                    action[k] = round(v * dim)
-                else:
-                    action[k] = max(0, min(dim - 1, round(v)))
-        elif self.scale != 1.0:
-            # Map model's image-pixel coords back to logical OS coords.
-            # scale = image_edge / logical_edge, so divide to get OS pixels.
-            # When scale > 1.0 (retina image, larger than logical), this is
-            # a halve. When scale < 1.0 (downsampled), this is an upscale.
-            for k in ("x", "y"):
-                if isinstance(action.get(k), (int, float)):
-                    action[k] = round(action[k] / self.scale)
+        # Map the model's image-pixel coords back to logical OS pixels.
+        # scale = image_edge / logical_edge, so dividing converts. (For a
+        # retina screenshot at 2x, scale=2 and we halve.) Belt-and-suspenders
+        # 0-1 fallback: if the model accidentally outputs a fraction (≤ 1.5)
+        # we treat it as such and multiply by the OS dimension instead.
+        for k, logical_dim in (("x", self.logical_w), ("y", self.logical_h)):
+            v = action.get(k)
+            if not isinstance(v, (int, float)):
+                continue
+            if 0 <= v <= 1.5:
+                action[k] = round(v * logical_dim)
+            else:
+                action[k] = max(0, min(logical_dim - 1,
+                                       round(v / self.scale)))
 
         # Capture the model's running progress for echo on next turn.
         prog = action.get("progress")
