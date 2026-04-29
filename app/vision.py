@@ -568,14 +568,43 @@ class VisionClient:
                                   user_text: str, feedback: str | None) -> dict:
         """Native Gemini Computer Use call. Returns an action dict in the
         same shape as other providers (so the runner can dispatch it
-        unchanged)."""
-        contents = [{
-            "role": "user",
-            "parts": [
-                {"inline_data": {"mime_type": "image/jpeg", "data": b64}},
-                {"text": user_text},
-            ],
-        }]
+        unchanged).
+
+        Maintains a stateful conversation in `self._cu_history`. Computer
+        Use needs prior model functionCalls echoed back as functionResponses
+        — without that the model has no memory and re-issues the same
+        action turn after turn (e.g. spams cmd+space because it doesn't
+        know Spotlight is already open). Only the LATEST screenshot is sent
+        as inline_data; prior user turns hold just the functionResponse, so
+        request size stays bounded across long runs."""
+        if not hasattr(self, "_cu_history"):
+            self._cu_history: list[dict] = []
+            self._cu_last_fn_name: str | None = None
+
+        # Build this turn's user parts. If we have a prior functionCall,
+        # acknowledge it with a functionResponse before showing the new
+        # screenshot. Response payload is intentionally minimal — the model
+        # learns from the screenshot whether the action worked, not from
+        # our text.
+        current_user_parts: list[dict] = []
+        if self._cu_last_fn_name:
+            current_user_parts.append({
+                "functionResponse": {
+                    "name": self._cu_last_fn_name,
+                    # url/current_url is required by the Computer Use
+                    # model — it was trained for browsers and rejects
+                    # the request without one. We're driving a macOS
+                    # desktop so there's no real URL; pass a placeholder.
+                    "response": {"result": "ok", "url": "desktop://macos"},
+                }
+            })
+        current_user_parts.append(
+            {"inline_data": {"mime_type": "image/jpeg", "data": b64}}
+        )
+        current_user_parts.append({"text": user_text})
+
+        contents = self._cu_history + [{"role": "user",
+                                        "parts": current_user_parts}]
         body = {
             "system_instruction": {"parts": [{"text": self._CU_SYSTEM}]},
             "contents": contents,
@@ -655,6 +684,31 @@ class VisionClient:
                 pass
         # Click coords come in 0-1000 normalized; reuse the shared mapper.
         self._to_logical_xy(action)
+
+        # Append this turn to history WITHOUT the screenshot — the latest
+        # screenshot is always re-sent on the next call's user turn, so we
+        # don't need to keep prior images in context (would balloon tokens).
+        # We keep a placeholder text part so the role alternation stays
+        # well-formed and the model still has a continuous narrative.
+        history_user_parts: list[dict] = []
+        if self._cu_last_fn_name:
+            history_user_parts.append({
+                "functionResponse": {
+                    "name": self._cu_last_fn_name,
+                    # url/current_url is required by the Computer Use
+                    # model — it was trained for browsers and rejects
+                    # the request without one. We're driving a macOS
+                    # desktop so there's no real URL; pass a placeholder.
+                    "response": {"result": "ok", "url": "desktop://macos"},
+                }
+            })
+        history_user_parts.append(
+            {"text": "[screenshot omitted from history] " + user_text}
+        )
+        self._cu_history.append({"role": "user", "parts": history_user_parts})
+        self._cu_history.append({"role": "model",
+                                 "parts": [{"functionCall": fc}]})
+        self._cu_last_fn_name = fc.get("name")
         return action
 
     def _cu_fc_to_action(self, fc: dict, commentary: str) -> dict:
