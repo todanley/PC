@@ -49,10 +49,14 @@ ANTHROPIC_VERSION = "2023-06-01"
 #   gemini-2.5-flash-lite, fast (~3-5s/turn), no Chromium pop-up.
 def _provider() -> str:
     p = os.environ.get("PHANTOM_PROVIDER", "").lower()
-    if p in ("anthropic", "moonshot", "gemini", "google"):
+    if p in ("anthropic", "moonshot", "gemini", "google", "computer_use"):
         return p
     if MODEL.startswith(("kimi-", "moonshot-")):
         return "moonshot"
+    if "computer-use" in MODEL:
+        # gemini-2.5-computer-use-preview-* requires the native
+        # generateContent endpoint with the built-in computer_use tool.
+        return "computer_use"
     if MODEL.startswith("gemini"):
         # Default to API if a key is provided, else fall back to the
         # Playwright/subscription path so existing setups keep working.
@@ -65,6 +69,8 @@ PROVIDER = _provider()
 API_URL = {
     "moonshot": "https://api.moonshot.ai/v1/chat/completions",
     "google":   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    "computer_use": (f"https://generativelanguage.googleapis.com/v1beta/"
+                     f"models/{MODEL}:generateContent"),
 }.get(PROVIDER, "https://api.anthropic.com/v1/messages")
 # Path to the Gemini CLI tool (only used when PROVIDER == "gemini").
 GEMINI_CLI = os.path.expanduser(
@@ -181,7 +187,7 @@ class VisionClient:
         # Per-provider key resolution. The legacy ANTHROPIC_API_KEY env name
         # is reused for moonshot/anthropic for backwards-compat with existing
         # launchers; google uses its own GEMINI_API_KEY so both can coexist.
-        if PROVIDER == "google":
+        if PROVIDER in ("google", "computer_use"):
             self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         else:
             self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
@@ -189,7 +195,9 @@ class VisionClient:
             if not os.path.exists(GEMINI_CLI):
                 raise VisionError(f"Gemini CLI not found at {GEMINI_CLI}")
         elif not self.api_key:
-            key_name = "GEMINI_API_KEY" if PROVIDER == "google" else "ANTHROPIC_API_KEY"
+            key_name = ("GEMINI_API_KEY"
+                        if PROVIDER in ("google", "computer_use")
+                        else "ANTHROPIC_API_KEY")
             raise VisionError(f"{key_name} not set")
         plat, primary_mod = _platform_strings()
         self.logical_w, self.logical_h = screen_size
@@ -255,7 +263,7 @@ class VisionClient:
           • Anthropic / Moonshot: pixel coords in image space → divide by
             self.scale (= image_w / logical_w) to get logical pixels.
         Result is clamped to [0, dim - 1]."""
-        gemini_norm = PROVIDER in ("google", "gemini")
+        gemini_norm = PROVIDER in ("google", "gemini", "computer_use")
         for k, logical_dim, image_dim in (
             ("x", self.logical_w, self.image_w),
             ("y", self.logical_h, self.image_h),
@@ -373,6 +381,11 @@ class VisionClient:
                 self._last_progress = prog.strip()
             # No history accumulation for Gemini (fresh browser each call).
             return action
+
+        if PROVIDER == "computer_use":
+            return self._next_action_computer_use(
+                screenshot_path, b64, user_text, feedback
+            )
 
         if PROVIDER in ("moonshot", "google"):
             # OpenAI-compatible: image_url with data: URI, system as message.
@@ -533,3 +546,154 @@ class VisionClient:
                 "content": [{"type": "text", "text": action_json}],
             })
         return action
+
+    # ─── Computer Use (Gemini native generateContent + computer_use tool) ───
+    _CU_SYSTEM = (
+        "You are driving a macOS desktop computer (NOT a web browser). The "
+        "screenshot represents the entire screen. Operate ONLY with these "
+        "input primitives: click_at, type_text_at, scroll_document, "
+        "scroll_at, key_combination, wait_5_seconds, hover_at, long_press_at, "
+        "drag_and_drop. NEVER call open_web_browser, navigate, search, "
+        "go_back, or go_forward — those are browser-only and are invalid "
+        "here. To launch an app on macOS: key_combination 'cmd+space', then "
+        "type_text_at the app's native name (Chinese apps in Chinese), then "
+        "key_combination 'enter'. Coordinates are normalized to a 0-1000 "
+        "grid. After clicking a toggle (follow / like / save / subscribe), "
+        "MOVE ON — don't re-click the same control."
+    )
+    _CU_EXCLUDED_FNS = ("open_web_browser", "navigate", "search",
+                        "go_back", "go_forward")
+
+    def _next_action_computer_use(self, screenshot_path: str, b64: str,
+                                  user_text: str, feedback: str | None) -> dict:
+        """Native Gemini Computer Use call. Returns an action dict in the
+        same shape as other providers (so the runner can dispatch it
+        unchanged)."""
+        contents = [{
+            "role": "user",
+            "parts": [
+                {"inline_data": {"mime_type": "image/jpeg", "data": b64}},
+                {"text": user_text},
+            ],
+        }]
+        body = {
+            "system_instruction": {"parts": [{"text": self._CU_SYSTEM}]},
+            "contents": contents,
+            "tools": [{
+                "computer_use": {
+                    "environment": "ENVIRONMENT_BROWSER",  # only env supported
+                    "excluded_predefined_functions": list(self._CU_EXCLUDED_FNS),
+                }
+            }],
+        }
+        url = f"{API_URL}?key={self.api_key}"
+        req = urllib.request.Request(
+            url, data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        backoffs = (2, 6, 18)
+        last_err: VisionError | None = None
+        payload = None
+        for attempt in range(len(backoffs) + 1):
+            try:
+                with urllib.request.urlopen(req, timeout=120, context=_SSL_CTX) as resp:
+                    payload = json.loads(resp.read())
+                break
+            except urllib.error.HTTPError as e:
+                msg = e.read()[:300].decode("utf-8", "ignore")
+                last_err = VisionError(f"http {e.code}: {msg}")
+                if e.code == 429 or 500 <= e.code < 600:
+                    if attempt < len(backoffs):
+                        time.sleep(backoffs[attempt]); continue
+                raise last_err
+            except Exception as e:
+                last_err = VisionError(str(e))
+                if attempt < len(backoffs):
+                    time.sleep(backoffs[attempt]); continue
+                raise last_err
+        if payload is None:
+            raise last_err or VisionError("computer_use: no payload")
+
+        # Pluck the first functionCall part. Gemini may interleave text
+        # commentary and a function call; we only need the call.
+        cands = payload.get("candidates", [])
+        if not cands:
+            raise VisionError(f"computer_use: no candidates: {payload}")
+        parts = cands[0].get("content", {}).get("parts", []) or []
+        fc = next((p["functionCall"] for p in parts if "functionCall" in p), None)
+        text_parts = [p.get("text", "") for p in parts if "text" in p]
+        commentary = "\n".join(t for t in text_parts if t)
+        if fc is None:
+            # Model returned text only (it asked a question or wandered).
+            # Surface what it said so the runner can fail visibly.
+            raise VisionError(
+                f"computer_use: no functionCall, only text: {commentary[:300]}"
+            )
+
+        action = self._cu_fc_to_action(fc, commentary)
+        self.last_turn = {
+            "screenshot": screenshot_path,
+            "user_text": user_text,
+            "response_text": json.dumps(
+                {"functionCall": fc, "commentary": commentary},
+                ensure_ascii=False,
+            ),
+        }
+        dump_path = os.environ.get("PHANTOM_TURN_DUMP")
+        if dump_path:
+            try:
+                with open(dump_path, "a", encoding="utf-8") as fh:
+                    fh.write("\n" + "=" * 80 + "\n")
+                    fh.write(f"TURN @ {screenshot_path} (computer_use)\n")
+                    fh.write("=" * 80 + "\nSYSTEM:\n" + self._CU_SYSTEM + "\n")
+                    fh.write("-" * 80 + "\nUSER TEXT:\n" + user_text + "\n")
+                    fh.write("-" * 80 + "\nFUNCTION CALL:\n"
+                             + json.dumps(fc, ensure_ascii=False) + "\n")
+                    if commentary:
+                        fh.write("COMMENTARY:\n" + commentary + "\n")
+            except Exception:
+                pass
+        # Click coords come in 0-1000 normalized; reuse the shared mapper.
+        self._to_logical_xy(action)
+        return action
+
+    def _cu_fc_to_action(self, fc: dict, commentary: str) -> dict:
+        """Map a Computer Use functionCall to phantom-click's action dict.
+        Unmapped or browser-only functions degrade to `wait` so the loop
+        keeps going instead of crashing."""
+        name = fc.get("name", "")
+        args = fc.get("args", {}) or {}
+        reason = (commentary or f"computer_use:{name}")[:200]
+        if name == "click_at":
+            return {"action": "click", "x": args.get("x"), "y": args.get("y"),
+                    "reasoning": reason, "progress": ""}
+        if name == "type_text_at":
+            # Embed click+type so _dispatch can do both atomically.
+            return {"action": "type", "x": args.get("x"), "y": args.get("y"),
+                    "text": args.get("text", ""),
+                    "reasoning": reason, "progress": ""}
+        if name == "key_combination":
+            keys = (args.get("keys") or "").lower().replace("command", "cmd")
+            return {"action": "key", "key": keys,
+                    "reasoning": reason, "progress": ""}
+        if name == "scroll_document":
+            return {"action": "scroll",
+                    "direction": args.get("direction", "down"),
+                    "reasoning": reason, "progress": ""}
+        if name == "scroll_at":
+            return {"action": "scroll",
+                    "direction": args.get("direction", "down"),
+                    "scroll_x": args.get("x"), "scroll_y": args.get("y"),
+                    "reasoning": reason, "progress": ""}
+        if name == "wait_5_seconds":
+            return {"action": "wait", "reasoning": reason, "progress": ""}
+        if name in ("hover_at", "long_press_at"):
+            # Best-effort: treat as a click at the same point. Hover doesn't
+            # exist in our input layer; long-press differs from click only
+            # in duration which we don't model.
+            return {"action": "click", "x": args.get("x"), "y": args.get("y"),
+                    "reasoning": f"{name} → click({reason})", "progress": ""}
+        # drag_and_drop / unknown → no-op so the run continues.
+        return {"action": "wait",
+                "reasoning": f"unsupported function {name}; skipped",
+                "progress": ""}
