@@ -349,15 +349,19 @@ class VisionClient:
             action = _lenient_json_loads(m.group())
             if action is None:
                 raise VisionError(f"invalid JSON: {m.group()[:200]}")
-            # Gemini gets the same normalized-fraction instruction as Kimi.
-            for k, dim in (("x", self.logical_w), ("y", self.logical_h)):
+            # Same image-pixel convention as the rest: divide by self.scale
+            # (retina) to get OS-logical pixels; treat ≤1.5 as a stray
+            # fraction.
+            for k, logical_dim in (("x", self.logical_w),
+                                   ("y", self.logical_h)):
                 v = action.get(k)
                 if not isinstance(v, (int, float)):
                     continue
                 if 0 <= v <= 1.5:
-                    action[k] = round(v * dim)
+                    action[k] = round(v * logical_dim)
                 else:
-                    action[k] = max(0, min(dim - 1, round(v)))
+                    action[k] = max(0, min(logical_dim - 1,
+                                           round(v / self.scale)))
             prog = action.get("progress")
             if isinstance(prog, str) and prog.strip():
                 self._last_progress = prog.strip()
