@@ -140,6 +140,15 @@ def _refocus():
 # screenshot. Lets click animations / page transitions render before the
 # next vision call.
 _POST_ACTION_DELAY_S = 1.0
+# Tasks that say "all / every / 所有 / 全部" implicitly traverse a list.
+# Models often declare `done` after seeing the visible top of the list
+# without verifying nothing's hidden below. The runner intercepts those
+# `done`s and forces a verifying scroll before accepting (see
+# _done_needs_scroll_verify usage below).
+_LIST_TRAVERSAL_TASK = re.compile(
+    r"(\ball\b|\bevery\b|\beach\b|所有|全部|整个|每[一个个个]?)",
+    re.IGNORECASE,
+)
 # Silent dispatch suppressor — see _click_bucket. Two consecutive clicks at
 # the same 24-px bucket are almost always the model second-guessing a toggle
 # button and would undo the prior click. The runner drops the 2nd dispatch
@@ -417,6 +426,30 @@ class TaskRunner(QThread):
             self.step_done.emit(step, action)
 
             if action.get("action") == "done":
+                # Done-veto for list-traversal tasks: if the user asked to
+                # process "all/every/所有/全部 …", the model often declares
+                # done after seeing the visible top of a list without
+                # verifying nothing's hidden below the viewport. Force a
+                # scroll at smart fallback positions; if any of them moves
+                # the screen, there IS more content the model never saw —
+                # reject `done`, inject feedback, continue the loop.
+                if _LIST_TRAVERSAL_TASK.search(self.task):
+                    revealed = self._verify_done_by_scroll(
+                        screen, inp, shot, step, last_click_xy, sw, sh
+                    )
+                    if revealed:
+                        pending_feedback = (
+                            "Your `done` was REJECTED. The runner "
+                            "verified by scrolling and the screen DID "
+                            "change — there is more content below the "
+                            "visible window that you did NOT process. "
+                            "Re-localize on the next screenshot, finish "
+                            "the newly-revealed items, then only declare "
+                            "`done` after a verifying scroll truly "
+                            "reveals nothing new."
+                        )
+                        time.sleep(_POST_ACTION_DELAY_S)
+                        continue
                 self.finished_ok.emit(action.get("reasoning") or "done")
                 return
 
@@ -524,6 +557,41 @@ class TaskRunner(QThread):
                               "scrollbar / list rows live. Otherwise "
                               "treat the list as fully processed."
                         )
+
+    def _verify_done_by_scroll(self, screen: Screen, inp: Input,
+                               before_path: str, step: int,
+                               last_click_xy: tuple[float, float] | None,
+                               sw: int, sh: int) -> bool:
+        """Try scrolling at several smart positions to see if the screen
+        actually has more content than what's currently visible. Returns
+        True iff one of the candidate scrolls moved the screen — meaning
+        the model's `done` was premature and there's more to process."""
+        verify_path = os.path.join(self._tmpdir, f"verify_done_{step:02d}.png")
+        candidates: list[tuple[float, float]] = []
+        seen: set[tuple[int, int]] = set()
+        def _add(c):
+            key = (round(c[0]), round(c[1]))
+            if key not in seen:
+                seen.add(key); candidates.append(c)
+        if last_click_xy is not None:
+            _add(last_click_xy)
+        _add((sw * 0.78, sh * 0.50))   # right-half center
+        _add((sw * 0.22, sh * 0.50))   # left-half center
+        _add((sw * 0.50, sh * 0.50))   # geometric center
+        _add((sw * 0.50, sh * 0.30))   # upper-center (popovers)
+        for cx, cy in candidates:
+            try:
+                inp.scroll("down", x=cx, y=cy)
+            except Exception:
+                continue
+            time.sleep(_POST_ACTION_DELAY_S)
+            try:
+                screen.capture(verify_path)
+            except Exception:
+                continue
+            if not _scroll_was_noop(before_path, verify_path):
+                return True
+        return False
 
     def _dispatch(self, inp: Input, action: dict,
                   scroll_fallback: tuple[float, float] | None = None):
