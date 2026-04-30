@@ -51,3 +51,16 @@ the CURRENT relationship, not the action a click would take:
 A click flips the state, so the visible label is also a record of what
 just happened: a row that now shows the red/Follow style is one whose
 follow relationship was just removed (or never existed).
+
+## Avatar-with-plus follow indicator (short-video players)
+
+In a single-video / full-screen video player (TikTok, Douyin, YouTube
+Shorts, Instagram Reels, etc.), the creator's avatar sits in the
+right-side action rail. A small "+" badge (usually red, half-overlapping
+the avatar's bottom edge) signals the current follow relationship:
+
+  • "+" badge present on the avatar → you do NOT follow this creator.
+    Clicking the badge follows them; the badge then disappears.
+  • Avatar with NO "+" badge → you ALREADY follow this creator. There is
+    no separate "已关注" label here — the absence of the "+" IS the
+    indicator. Do not click the avatar expecting it to follow.
