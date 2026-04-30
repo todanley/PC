@@ -626,13 +626,23 @@ class TaskRunner(QThread):
                 return
             inp.double_click(x, y)
         elif act == "type":
-            # Computer Use's type_text_at carries x,y for the field to focus.
-            # Click first to focus, then type. When x/y are absent we just
-            # type into whatever already has focus (older provider shape).
+            # Re-establish focus before typing. Two paths:
+            #  1. Action carries x/y (e.g. computer_use's type_text_at) →
+            #     click that exact target.
+            #  2. No x/y → re-click the last click coord. The model usually
+            #     spends one prior turn clicking the input field, then this
+            #     turn types — but Gemini Pro can take 30+ s to think
+            #     between turns and the input field often loses focus to
+            #     the browser idle / hover-out by then. Re-clicking the
+            #     same spot just before typing is a cheap way to make sure
+            #     keystrokes land in the intended field.
             x, y = action.get("x"), action.get("y")
+            if not (isinstance(x, (int, float)) and isinstance(y, (int, float))):
+                if scroll_fallback is not None:
+                    x, y = scroll_fallback
             if isinstance(x, (int, float)) and isinstance(y, (int, float)):
                 inp.click(x, y)
-                time.sleep(0.1)
+                time.sleep(0.15)
             inp.type_text(action.get("text", ""))
         elif act == "key":
             inp.press_combo(action.get("key", ""))
