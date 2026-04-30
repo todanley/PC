@@ -38,32 +38,16 @@ my followed accounts, …"):
   visible content area before dispatching the wheel event so it scrolls
   the right element.
 
-## Follow / unfollow toggles in social apps
+## Follow buttons in social apps (Douyin / Weibo / Twitter / Instagram / etc.)
 
-Follow buttons are TOGGLES — one click flips their state. On every
-social platform (Douyin, Weibo, Twitter/X, Instagram, YouTube, Bilibili,
-TikTok) the label inverts the moment you click:
+Follow buttons in social apps are toggles. The label and color encode
+the CURRENT relationship, not the action a click would take:
 
-  • Currently following → button reads "已关注" / "Following" /
-    "Subscribed" (usually GRAY, outlined, low-emphasis).
-  • Currently NOT following → button reads "关注" / "Follow" /
-    "Subscribe" (usually RED or BLUE, solid-filled, high-emphasis).
+  • Currently following an account → button reads "已关注" / "Following"
+    / "Subscribed", typically gray / outlined / low-emphasis.
+  • Currently NOT following an account → button reads "关注" / "Follow"
+    / "Subscribe", typically red / blue / solid-filled / high-emphasis.
 
-When the task is **unfollow** (取消关注 / unfollow / unsubscribe):
-- ONLY click GRAY "已关注" / "Following" buttons. NEVER click RED/BLUE
-  "关注" / "Follow" buttons — those are accounts you (or someone) have
-  ALREADY unfollowed, and clicking them would RE-FOLLOW, undoing your
-  work.
-- After an unfollow click, that row's button immediately flips to the
-  opposite RED "关注" state. DO NOT re-click it.
-- If the list shows a mix of "已关注" (gray) and "关注" (red), the red
-  rows are already-unfollowed. Skip them, target only gray rows.
-- Track unfollowed account NAMES in your progress checklist so closing
-  and reopening the list doesn't trick you into reprocessing.
-
-When the task is **follow**, the rules mirror: only click RED/BLUE
-"关注" / "Follow" buttons; gray "已关注" rows are already done.
-
-Same symmetric rule for like / save / subscribe / mute toggles — read
-the current label, decide whether the action you'd take matches the
-task, click only when the label says "not yet". Then move on.
+A click flips the state, so the visible label is also a record of what
+just happened: a row that now shows the red/Follow style is one whose
+follow relationship was just removed (or never existed).
