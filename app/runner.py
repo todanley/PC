@@ -280,6 +280,12 @@ class TaskRunner(QThread):
         consecutive_stuck = 0
         _STUCK_LIMIT = 3
         pending_feedback: str | None = None
+        # Last click coords (logical px) — used as a smart fallback for
+        # scrolls when the model didn't pass scroll_x/scroll_y. If the
+        # model has been clicking inside a modal/list, the scroll lands
+        # in the same region, so the modal actually scrolls instead of
+        # the page underneath.
+        last_click_xy: tuple[float, float] | None = None
         while True:
             step += 1
             if self._cancel:
@@ -390,7 +396,7 @@ class TaskRunner(QThread):
             consecutive_stuck = 0
 
             try:
-                self._dispatch(inp, action)
+                self._dispatch(inp, action, scroll_fallback=last_click_xy)
             except Exception as e:
                 self.failed.emit(f"action {action.get('action')!r} failed: {e}")
                 return
@@ -399,6 +405,14 @@ class TaskRunner(QThread):
             # (key, scroll, wait, done) reset the streak so the next click can
             # land legitimately.
             last_bucket = new_bucket
+
+            # Remember last click point for the smart scroll fallback. We
+            # update on click/double_click only — scrolls inherit the prior
+            # click's anchor so they hit the same modal/list region.
+            if action.get("action") in ("click", "double_click"):
+                cx, cy = action.get("x"), action.get("y")
+                if isinstance(cx, (int, float)) and isinstance(cy, (int, float)):
+                    last_click_xy = (cx, cy)
 
             self.step_done.emit(step, action)
 
@@ -479,7 +493,8 @@ class TaskRunner(QThread):
                           )
                     )
 
-    def _dispatch(self, inp: Input, action: dict):
+    def _dispatch(self, inp: Input, action: dict,
+                  scroll_fallback: tuple[float, float] | None = None):
         act = action.get("action")
         if act == "click":
             x, y = action.get("x"), action.get("y")
@@ -494,18 +509,32 @@ class TaskRunner(QThread):
                 return
             inp.double_click(x, y)
         elif act == "type":
+            # Computer Use's type_text_at carries x,y for the field to focus.
+            # Click first to focus, then type. When x/y are absent we just
+            # type into whatever already has focus (older provider shape).
+            x, y = action.get("x"), action.get("y")
+            if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+                inp.click(x, y)
+                time.sleep(0.1)
             inp.type_text(action.get("text", ""))
         elif act == "key":
             inp.press_combo(action.get("key", ""))
         elif act == "scroll":
-            # Move the cursor to where the model wants to scroll, defaulting
-            # to slightly right of screen center (covers the typical modal
-            # footprint on Douyin desktop). Lets the model pass `scroll_x`/
-            # `scroll_y` (in OS-logical pixels) when it knows better.
-            sx, sy = action.get("scroll_x"), action.get("scroll_y")
-            inp.scroll(action.get("direction", "down"),
-                       x=sx if sx is not None else self._scroll_default_x,
-                       y=sy if sy is not None else self._scroll_default_y)
+            # scroll target precedence:
+            #   1. model-provided scroll_x/scroll_y (it knows where to scroll)
+            #   2. scroll_fallback (typically the last click point — if the
+            #      model has been clicking inside a modal/list, this routes
+            #      the wheel into that same region instead of page-center)
+            #   3. (sw*0.55, sh*0.55) — generic page anchor, only useful
+            #      when nothing else has happened yet
+            sx = action.get("scroll_x")
+            sy = action.get("scroll_y")
+            if sx is None or sy is None:
+                if scroll_fallback is not None:
+                    sx, sy = scroll_fallback
+                else:
+                    sx, sy = self._scroll_default_x, self._scroll_default_y
+            inp.scroll(action.get("direction", "down"), x=sx, y=sy)
         elif act in ("done", "wait"):
             return
         else:
