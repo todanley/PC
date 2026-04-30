@@ -82,7 +82,7 @@ POST-ACTION SCREENSHOT: this image was taken AFTER your previous action's effect
 RE-LOCALIZE EVERY TURN: app layouts shift between contexts. A control at one coordinate on screen A may not exist at all on screen B. NEVER reuse a coordinate from a prior turn — recompute from the current image.
 
 GLOBAL HARD RULES:
-▸ NEVER press `escape`. It often closes more than the user wanted (e.g. an entire modal). If a stray menu/popover appeared, click outside it on empty space.
+▸ TO GO BACK / DISMISS / EXIT FULLSCREEN / CLOSE A MODAL: ALWAYS try `key: escape` FIRST. It's the universal "close the topmost layer" gesture — modals, command palettes, fullscreen video, image viewers, search overlays, dropdowns all respond to it. One key press, no localization risk. Only fall back to clicking a visible back-arrow / × / outside-the-modal AFTER you confirm escape didn't change the screen on the next turn.
 ▸ NEVER use `cmd+tab` or other cross-app shortcuts. The runner keeps the target app focused.
 ▸ NEVER repeat the exact same `(x, y)` you used last turn. If a click missed, the correct target is somewhere else in this image — find it.
 ▸ NEVER click the macOS menu bar (the strip with the app name at y < 25). It opens system dropdowns.
@@ -100,12 +100,13 @@ TOGGLE-BUTTON RULE (any like / follow / save / subscribe / mute, etc.): a single
 Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 {{
-  "action": "click" | "double_click" | "type" | "key" | "scroll" | "wait" | "done",
+  "action": "click" | "double_click" | "type" | "key" | "scroll" | "drag" | "wait" | "done",
   "x": <num>, "y": <num>,           // for click / double_click
   "text": "<string>",               // for type
   "key": "<combo>",                 // for key, e.g. "{primary_mod}+space", "enter"
   "direction": "up" | "down",       // for scroll
   "scroll_x": <num>, "scroll_y": <num>, // optional, for scroll: point INSIDE the scrollable region (e.g. inside an open modal/popover/sidebar). Defaults to screen center, which only scrolls the page itself — wheel events at that point won't reach a modal's contents. Use the same coord convention as click x/y.
+  "x1": <num>, "y1": <num>, "x2": <num>, "y2": <num>, // for drag: press at (x1,y1), drag to (x2,y2), release. Use for slider CAPTCHAs, range-sliders, drag-and-drop. Same coord convention as click x/y.
   "reasoning": "<one short sentence on why this single action>",
   "progress": "<running checklist of what's been completed and what's left>"
 }}
@@ -211,13 +212,13 @@ class VisionClient:
         # coords" instructions degraded localization noticeably. Anthropic /
         # Moonshot localize directly in pixel space. Match the prompt to each
         # family's native convention; the runner converts back to OS pixels.
-        if PROVIDER in ("google", "gemini"):
+        if PROVIDER in ("google", "gemini", "moonshot"):
             coord_instructions = (
                 "All x/y coordinates you output are NORMALIZED to a 0-1000 "
                 "grid: x is 0 at the left edge, 1000 at the right edge; y is "
                 "0 at the top, 1000 at the bottom — REGARDLESS of the actual "
-                f"image's {prompt_w}x{prompt_h} pixel size. This matches "
-                "Gemini's spatial-understanding convention. Output integers "
+                f"image's {prompt_w}x{prompt_h} pixel size. This matches the "
+                "model family's spatial-grounding convention. Output integers "
                 "in [0, 1000]. The runner converts them to OS click-space "
                 "automatically."
             )
@@ -257,10 +258,22 @@ class VisionClient:
           • Anthropic / Moonshot: pixel coords in image space → divide by
             self.scale (= image_w / logical_w) to get logical pixels.
         Result is clamped to [0, dim - 1]."""
-        gemini_norm = PROVIDER in ("google", "gemini")
+        # Both the Gemini family AND Moonshot Kimi K2.5 emit coords in a
+        # 0-1000 normalized grid in practice (verified end-to-end with marker
+        # overlays — see /tmp/kimi_probe_marked.png). The earlier code only
+        # routed Gemini through the normalized branch and passed Kimi
+        # through unchanged, which silently mis-placed every Kimi click.
+        gemini_norm = PROVIDER in ("google", "gemini", "moonshot")
+        # x/y for click/type/scroll, plus x1/y1/x2/y2 for drag.
         for k, logical_dim, image_dim in (
             ("x", self.logical_w, self.image_w),
             ("y", self.logical_h, self.image_h),
+            ("x1", self.logical_w, self.image_w),
+            ("y1", self.logical_h, self.image_h),
+            ("x2", self.logical_w, self.image_w),
+            ("y2", self.logical_h, self.image_h),
+            ("scroll_x", self.logical_w, self.image_w),
+            ("scroll_y", self.logical_h, self.image_h),
         ):
             v = action.get(k)
             if not isinstance(v, (int, float)):
@@ -405,6 +418,11 @@ class VisionClient:
                 # empty until the thinking finishes — and even uncapped, the
                 # extra latency hurts. Disable.
                 body["thinking"] = {"type": "disabled"}
+            elif PROVIDER == "google" and MODEL.startswith("gemini-3"):
+                # Gemini 3 Pro REQUIRES thinking-mode (the API rejects
+                # reasoning_effort=none with "Budget 0 is invalid"). "low" is
+                # the minimum permitted; even at "low" a turn can take 60-180s.
+                body["reasoning_effort"] = "low"
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
@@ -446,7 +464,7 @@ class VisionClient:
         last_err: VisionError | None = None
         for attempt in range(len(backoffs) + 1):
             try:
-                with urllib.request.urlopen(req, timeout=60, context=_SSL_CTX) as resp:
+                with urllib.request.urlopen(req, timeout=300, context=_SSL_CTX) as resp:
                     payload = json.loads(resp.read())
                 break
             except urllib.error.HTTPError as e:
