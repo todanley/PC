@@ -105,6 +105,7 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
   "text": "<string>",               // for type
   "key": "<combo>",                 // for key, e.g. "{primary_mod}+space", "enter"
   "direction": "up" | "down",       // for scroll
+  "scroll_x": <num>, "scroll_y": <num>, // optional, for scroll: point INSIDE the scrollable region (e.g. inside an open modal/popover/sidebar). Defaults to screen center, which only scrolls the page itself — wheel events at that point won't reach a modal's contents. Use the same coord convention as click x/y.
   "reasoning": "<one short sentence on why this single action>",
   "progress": "<running checklist of what's been completed and what's left>"
 }}
@@ -113,6 +114,7 @@ Action notes:
 - ONE action per turn. The next turn shows the result.
 - To launch an app on macOS, press `{primary_mod}+space`, `type` the app's native name, then `key: enter`. If the task names an app in a non-Latin script (e.g. Chinese), type it in that script — Spotlight matches the bundled app name.
 - IGNORE unrelated windows: terminals, IDEs, log panels, monitor outputs. Don't wait on their spinners or take cues from their text.
+- For `scroll` to work inside a popup, modal, side panel, or any contained scrollable element: set `scroll_x` / `scroll_y` to a point INSIDE that element. A scroll at default (page center) routes wheel events to the page, which a modal will swallow without scrolling its own contents.
 - `done` when your `progress` shows the task is fully complete. `wait` when content is still loading."""
 
 
