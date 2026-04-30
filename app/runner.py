@@ -282,6 +282,13 @@ class TaskRunner(QThread):
 
         step = 0
         last_bucket: tuple[int, int] | None = None
+        # True when the most recent dispatched click was detected by the
+        # post-action verifier as a no-op. Used to disable the same-bucket
+        # suppressor on the very next turn so the model can retry a missed
+        # click at a slightly different coord without being silenced. Reset
+        # whenever a click DOES change the screen (or any non-click action
+        # runs).
+        last_click_was_noop = False
         # Counts consecutive turns where the bucket suppressor fired. After
         # `_STUCK_LIMIT` of these in a row, the model is locked into a coord
         # the runner believes is wrong — abort the run with a pointer to the
@@ -371,11 +378,14 @@ class TaskRunner(QThread):
                     continue
 
             new_bucket = _click_bucket(action)
-            if new_bucket is not None and new_bucket == last_bucket:
-                # Silent suppressor — preserve toggle state. The model gets a
-                # fresh screenshot on the next turn and a per-turn feedback
-                # nudge so it knows the previous attempt was a no-op and
-                # localizes a different element from the current screenshot.
+            # Suppress same-bucket repeats ONLY when the prior click actually
+            # had an effect — the goal is preserving the toggle state of a
+            # button that successfully toggled. If the previous click was a
+            # detected no-op (post-action verification flagged it), the
+            # current attempt is a RETRY of a missed click, not a toggle
+            # undo, so we let it through.
+            if (new_bucket is not None and new_bucket == last_bucket
+                    and not last_click_was_noop):
                 self.step_done.emit(step, {
                     "action": "suppressed_repeat_click",
                     "x": action.get("x"), "y": action.get("y"),
@@ -477,6 +487,7 @@ class TaskRunner(QThread):
                     if verify_path and _click_was_noop(
                         shot, verify_path, cx, cy, (sw, sh)
                     ):
+                        last_click_was_noop = True
                         pending_feedback = (
                             f"Your click at ({cx},{cy}) had NO visible effect — "
                             "the area around that point looks identical before "
@@ -488,6 +499,12 @@ class TaskRunner(QThread):
                             "coordinate — usually the correct target is a few "
                             "tens of pixels off from where you guessed."
                         )
+                    else:
+                        last_click_was_noop = False
+            else:
+                # Non-click action — clear the noop flag so a future click
+                # gets the bucket-suppressor protection back.
+                last_click_was_noop = False
 
             # Scroll-effect verification + auto-retry. A scroll that doesn't
             # change the screen almost always means the wheel event went to
