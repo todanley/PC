@@ -53,13 +53,18 @@ def _click_was_noop(before_path: str, after_path: str,
 
 
 def _scroll_was_noop(before_path: str, after_path: str,
-                     diff_threshold: float = 1.5) -> bool:
+                     diff_threshold: float = 4.0) -> bool:
     """Full-image pixel-diff before vs. after a scroll. Return True when the
     screen barely changed — a strong signal the wheel event landed on a
     region that doesn't accept it (e.g. screen center while a modal is
     open: the wheel goes to the page underneath, which is dimmed and
-    inert). Threshold smaller than the click variant because a successful
-    scroll moves a lot of pixels."""
+    inert).
+
+    Threshold is set above the noise floor we see from background
+    animations on apps like Douyin (autoplaying preview thumbnails in the
+    feed area produce a mean delta of ~1-3 even when nothing the user
+    cares about changed). A real scroll moving ~50 px of list content
+    gives a much larger mean delta than that."""
     try:
         a = Image.open(before_path).convert("RGB")
         b = Image.open(after_path).convert("RGB")
