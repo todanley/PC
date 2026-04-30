@@ -52,6 +52,26 @@ def _click_was_noop(before_path: str, after_path: str,
     return mean < diff_threshold
 
 
+def _scroll_was_noop(before_path: str, after_path: str,
+                     diff_threshold: float = 1.5) -> bool:
+    """Full-image pixel-diff before vs. after a scroll. Return True when the
+    screen barely changed — a strong signal the wheel event landed on a
+    region that doesn't accept it (e.g. screen center while a modal is
+    open: the wheel goes to the page underneath, which is dimmed and
+    inert). Threshold smaller than the click variant because a successful
+    scroll moves a lot of pixels."""
+    try:
+        a = Image.open(before_path).convert("RGB")
+        b = Image.open(after_path).convert("RGB")
+    except Exception:
+        return False
+    if a.size != b.size:
+        return False
+    diff = ImageChops.difference(a, b)
+    mean = float(np.asarray(diff, dtype=np.uint8).mean())
+    return mean < diff_threshold
+
+
 def _find_avfoundation_screen_index() -> str | None:
     """Return the avfoundation video-device index for `Capture screen 0`,
     or None if ffmpeg/the device can't be found. Indices vary per machine
@@ -416,6 +436,43 @@ class TaskRunner(QThread):
                             "coordinate — usually the correct target is a few "
                             "tens of pixels off from where you guessed."
                         )
+
+            # Scroll-effect verification: same idea as click verification,
+            # but full-frame diff. A scroll that doesn't change the screen
+            # almost always means the wheel event went to the wrong region
+            # (default page-center, while a modal/popover/sidebar is open
+            # somewhere else). Tell the model to re-issue the scroll with
+            # explicit scroll_x/scroll_y INSIDE the target region.
+            if action.get("action") == "scroll":
+                verify_path = os.path.join(self._tmpdir,
+                                           f"verify_{step:02d}.png")
+                try:
+                    screen.capture(verify_path)
+                except Exception:
+                    verify_path = None
+                if verify_path and _scroll_was_noop(shot, verify_path):
+                    used_xy = (action.get("scroll_x") is not None
+                               and action.get("scroll_y") is not None)
+                    pending_feedback = (
+                        "Your scroll had NO visible effect — the screen "
+                        "before and after looks the same. "
+                        + ("Even with scroll_x/scroll_y set, the scroll "
+                           "didn't reach a scrollable element. Pick a "
+                           "DIFFERENT point inside the target list/modal "
+                           "and try again — usually slightly nearer to "
+                           "the visible content's vertical middle."
+                           if used_xy else
+                           "You did NOT pass scroll_x/scroll_y — wheel "
+                           "events went to screen center, where any open "
+                           "modal/popover/sidebar will swallow them "
+                           "without scrolling its own contents. RE-ISSUE "
+                           "scroll WITH scroll_x and scroll_y pointing "
+                           "INSIDE the visible list/modal you want to "
+                           "scroll. Do NOT conclude the list is "
+                           "exhausted just because the visible top "
+                           "doesn't match — you simply didn't scroll it."
+                          )
+                    )
 
     def _dispatch(self, inp: Input, action: dict):
         act = action.get("action")
