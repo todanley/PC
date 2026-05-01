@@ -17,19 +17,18 @@ from .vision import VisionClient, VisionError
 def _click_was_noop(before_path: str, after_path: str,
                     cx: float, cy: float,
                     screen_size: tuple[int, int],
-                    half_win: int = 90,
                     diff_threshold: float = 4.0) -> bool:
-    """Compare a 2*half_win square centered on the click point in the
-    before/after screenshots. Return True when the region is essentially
-    unchanged — strong signal the click missed its target / hit dead area /
-    bounced off a non-clickable element. False when the region clearly
-    changed (button toggled, modal opened, etc.).
+    """Full-image pixel-diff before vs. after a click. Return True when
+    the screen is essentially unchanged — strong signal the click missed
+    its target / hit dead area. False when something on screen clearly
+    changed (modal opened, button toggled, focus indicator drawn, etc.).
 
-    Cropping at the click point isolates us from confounding changes
-    elsewhere on screen (e.g. Douyin's autoplay advancing the feed even
-    when the click does nothing) — an issue that would defeat full-image
-    comparison. We measure mean per-pixel absolute RGB delta; threshold
-    set empirically (4 / 255 ≈ JPEG / cursor-render noise floor).
+    Earlier we cropped a small window around the click point to isolate
+    from confounding changes elsewhere (Douyin feed autoplay), but that
+    missed cases like clicking an empty search box where the only visual
+    change is the cursor blinking inside it — a few pixels of change in
+    a 180×180 window averages below threshold and gets falsely flagged
+    as a missed click.
     """
     try:
         a = Image.open(before_path).convert("RGB")
@@ -38,16 +37,7 @@ def _click_was_noop(before_path: str, after_path: str,
         return False
     if a.size != b.size:
         return False
-    logical_w, logical_h = screen_size
-    sx = a.width / max(1, logical_w)
-    sy = a.height / max(1, logical_h)
-    px = round(cx * sx)
-    py = round(cy * sy)
-    box = (max(0, px - half_win), max(0, py - half_win),
-           min(a.width, px + half_win), min(a.height, py + half_win))
-    if box[2] - box[0] < 4 or box[3] - box[1] < 4:
-        return False
-    diff = ImageChops.difference(a.crop(box), b.crop(box))
+    diff = ImageChops.difference(a, b)
     mean = float(np.asarray(diff, dtype=np.uint8).mean())
     return mean < diff_threshold
 
@@ -355,6 +345,33 @@ class TaskRunner(QThread):
                 self.failed.emit("cancelled")
                 return
 
+            # Hard reject `key: escape`. The system prompt has a NEVER rule
+            # against it but Gemini 3 Pro still emits it occasionally to
+            # "go back" or dismiss a profile - which on macOS often closes
+            # the entire window or kicks the model out of the app entirely.
+            # Recovery from that costs many turns. Catch and feed back.
+            if action.get("action") == "key":
+                k = (action.get("key") or "").lower().strip()
+                if k in ("escape", "esc", "key.escape"):
+                    self.step_done.emit(step, {
+                        "action": "rejected_escape_press",
+                        "key": action.get("key"),
+                        "reasoning": "runner: 'escape' rejected — closes more than intended.",
+                    })
+                    pending_feedback = (
+                        "Your `key: escape` was REJECTED by the runner. The "
+                        "GLOBAL HARD RULES say NEVER press escape — it closes "
+                        "modals, dropdowns, or whole windows in unpredictable "
+                        "ways and often kicks you out of the target app. To "
+                        "go back from a sub-view: look for an in-app back "
+                        "arrow (< / ‹ / left chevron, usually top-left of "
+                        "content area) and click it. To dismiss a popover: "
+                        "click empty space outside it. Re-localize from the "
+                        "current screenshot."
+                    )
+                    time.sleep(_POST_ACTION_DELAY_S)
+                    continue
+
             # Hard reject menu-bar clicks (y<25). The system prompt warns
             # against this but smaller models (Kimi K2.5, Haiku 4.5) violate
             # it on Step 1 anyway, opening a macOS dropdown that costs the
@@ -489,15 +506,20 @@ class TaskRunner(QThread):
                     ):
                         last_click_was_noop = True
                         pending_feedback = (
-                            f"Your click at ({cx},{cy}) had NO visible effect — "
-                            "the area around that point looks identical before "
-                            "and after the click. The element you targeted "
-                            "wasn't actually clickable (or you missed it). DO "
-                            "NOT increment any progress counter for this "
-                            "attempt — the action did not happen. Re-localize "
-                            "from the next screenshot and try a DIFFERENT "
-                            "coordinate — usually the correct target is a few "
-                            "tens of pixels off from where you guessed."
+                            f"Your click at ({cx},{cy}) produced no visible "
+                            "change in the area around that point. Two cases:\n"
+                            "  (a) Target was a TEXT INPUT (search box, "
+                            "address bar, comment field, etc.). Empty inputs "
+                            "only show a blinking cursor when focused, which "
+                            "this detector can miss. If that was your intent, "
+                            "your NEXT action should be `type` with the text "
+                            "to enter — do NOT re-click a different spot.\n"
+                            "  (b) You missed a button / hit dead area. In "
+                            "that case re-localize from the next screenshot "
+                            "and try a different coordinate.\n"
+                            "Pick (a) or (b) based on what you were trying "
+                            "to click. Do not increment progress for the "
+                            "click itself if it failed."
                         )
                     else:
                         last_click_was_noop = False
@@ -646,6 +668,12 @@ class TaskRunner(QThread):
             inp.type_text(action.get("text", ""))
         elif act == "key":
             inp.press_combo(action.get("key", ""))
+        elif act == "drag":
+            x1, y1 = action.get("x1"), action.get("y1")
+            x2, y2 = action.get("x2"), action.get("y2")
+            if not all(isinstance(v, (int, float)) for v in (x1, y1, x2, y2)):
+                return  # malformed drag — soft no-op so model can recover
+            inp.drag(x1, y1, x2, y2)
         elif act == "scroll":
             # scroll target precedence:
             #   1. model-provided scroll_x/scroll_y (it knows where to scroll)
