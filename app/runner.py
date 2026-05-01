@@ -17,18 +17,33 @@ from .vision import VisionClient, VisionError
 def _click_was_noop(before_path: str, after_path: str,
                     cx: float, cy: float,
                     screen_size: tuple[int, int],
-                    diff_threshold: float = 4.0) -> bool:
-    """Full-image pixel-diff before vs. after a click. Return True when
-    the screen is essentially unchanged — strong signal the click missed
-    its target / hit dead area. False when something on screen clearly
-    changed (modal opened, button toggled, focus indicator drawn, etc.).
+                    half_win: int = 100,
+                    mean_threshold: float = 2.0,
+                    sig_pixel_threshold: int = 30,
+                    sig_pixel_delta: int = 25) -> bool:
+    """Detect whether a click had any visible effect on screen.
 
-    Earlier we cropped a small window around the click point to isolate
-    from confounding changes elsewhere (Douyin feed autoplay), but that
-    missed cases like clicking an empty search box where the only visual
-    change is the cursor blinking inside it — a few pixels of change in
-    a 180×180 window averages below threshold and gets falsely flagged
-    as a missed click.
+    Two single-signal designs both have failure modes:
+      • Full-image mean delta misses small toggle-button flips: a
+        ~80×30 px label change against 6.1 M total pixels averages to
+        ~0.04 — far below any sane noise threshold — and the runner
+        falsely flags successful 已关注/关注 toggles as no-ops.
+      • Regional crop with mean-only misses cursor-blink inside an
+        empty search box: ~36 changed px in a 200×200 region average
+        ~0.1.
+
+    Hybrid: crop a 2*half_win square around the click point (the
+    target IS the most likely site of change), then declare the click
+    HAD effect if EITHER:
+      • mean per-pixel delta in the crop > mean_threshold (catches
+        toggle flips, modal opens that animate from the click point,
+        large color changes), or
+      • count of pixels with any-channel delta > sig_pixel_delta is
+        >= sig_pixel_threshold (catches small but distinct visual
+        changes like a cursor blink — the cursor's ~36 strong-delta
+        pixels easily exceed 30).
+
+    A click is a no-op iff BOTH signals say nothing happened.
     """
     try:
         a = Image.open(before_path).convert("RGB")
@@ -37,9 +52,21 @@ def _click_was_noop(before_path: str, after_path: str,
         return False
     if a.size != b.size:
         return False
-    diff = ImageChops.difference(a, b)
-    mean = float(np.asarray(diff, dtype=np.uint8).mean())
-    return mean < diff_threshold
+    logical_w, logical_h = screen_size
+    sx = a.width / max(1, logical_w)
+    sy = a.height / max(1, logical_h)
+    px = round(cx * sx)
+    py = round(cy * sy)
+    box = (max(0, px - half_win), max(0, py - half_win),
+           min(a.width, px + half_win), min(a.height, py + half_win))
+    if box[2] - box[0] < 4 or box[3] - box[1] < 4:
+        return False
+    diff = np.asarray(ImageChops.difference(a.crop(box), b.crop(box)),
+                      dtype=np.uint8)
+    mean = float(diff.mean())
+    # Per-pixel "did any channel change > delta" → 2-D bool, then sum.
+    sig_pixels = int((diff > sig_pixel_delta).any(axis=2).sum())
+    return mean < mean_threshold and sig_pixels < sig_pixel_threshold
 
 
 def _scroll_was_noop(before_path: str, after_path: str,
