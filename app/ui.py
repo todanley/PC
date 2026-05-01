@@ -192,7 +192,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("噜噜机器人")
-        self.setMinimumSize(1082, 608)
+        self.setMinimumSize(1400, 820)
         self.setStyleSheet(DARK_QSS)
         self._runner: TaskRunner | None = None
         self._system_prompt: str = ""
@@ -241,24 +241,52 @@ class MainWindow(QMainWindow):
 
         ctrl_row.addStretch(1)
 
+        self.sys_btn = QPushButton("查看系统提示")
+        self.sys_btn.setObjectName("linkBtn")
+        self.sys_btn.clicked.connect(self._on_show_system)
+        ctrl_row.addWidget(self.sys_btn)
+
         layout.addLayout(ctrl_row)
         layout.addSpacing(8)
 
-        # User-facing progress panel — shows only what the agent is trying
-        # to do (点击/输入/按键/...). Internal AI chatter (思考中/截图中/
-        # recording paths) is filtered out in _on_step_started.
+        # 进度 (left, brief activity log) + 对话 (right, full per-turn
+        # debug card with screenshot, prompt, response, replay button).
+        # Splitter so user can drag the divider.
+        splitter = QSplitter(Qt.Horizontal)
+
+        left = QWidget()
+        lv = QVBoxLayout(left)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(6)
         log_label = QLabel("进度")
         log_label.setStyleSheet("color: #8b9099; font-size: 22px;")
-        layout.addWidget(log_label)
+        lv.addWidget(log_label)
         self.log = QListWidget()
-        layout.addWidget(self.log, stretch=1)
+        lv.addWidget(self.log, stretch=1)
+        splitter.addWidget(left)
 
-        # Conversation panel still hidden — keep stubs so signal handlers
-        # don't crash when they reference these widgets.
+        right = QWidget()
+        rv = QVBoxLayout(right)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.setSpacing(6)
+        conv_label = QLabel("对话与调试")
+        conv_label.setStyleSheet("color: #8b9099; font-size: 22px;")
+        rv.addWidget(conv_label)
+        self.conv_scroll = QScrollArea()
+        self.conv_scroll.setWidgetResizable(True)
         self._conv_inner = QWidget()
         self._conv_layout = QVBoxLayout(self._conv_inner)
-        self._conv_layout.addStretch(1)
-        self.conv_scroll = QScrollArea()
+        self._conv_layout.setContentsMargins(4, 4, 4, 4)
+        self._conv_layout.setSpacing(10)
+        self._conv_layout.addStretch(1)  # bottom spacer; cards inserted before it
+        self.conv_scroll.setWidget(self._conv_inner)
+        rv.addWidget(self.conv_scroll, stretch=1)
+        splitter.addWidget(right)
+
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([320, 640])
+        layout.addWidget(splitter, stretch=1)
 
     def _append_log(self, text: str, color: str = "#c9cdd4"):
         item = QListWidgetItem(text)
