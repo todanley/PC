@@ -105,7 +105,7 @@ class _TurnCard(QFrame):
         header.setObjectName("turnHeader")
         v.addWidget(header)
 
-        # Screenshot thumbnail
+        # Screenshot thumbnail + debug-info row.
         shot = payload.get("screenshot")
         if shot:
             pm = QPixmap(shot)
@@ -113,6 +113,32 @@ class _TurnCard(QFrame):
                 thumb = QLabel()
                 thumb.setPixmap(pm.scaledToWidth(360, Qt.SmoothTransformation))
                 v.addWidget(thumb)
+            # One-line metadata + an "Open at full size" button so the user
+            # can inspect exactly the image the model received (the JPEG sent
+            # over the wire is a re-encode of this PNG; for click coord
+            # debugging the dimensions and visible content are identical).
+            try:
+                w = pm.width(); h = pm.height()
+            except Exception:
+                w = h = 0
+            import os
+            info_row = QHBoxLayout()
+            info_row.setContentsMargins(0, 0, 0, 0)
+            meta = QLabel(f"📷 {w}×{h}px · {os.path.basename(shot)}")
+            meta.setObjectName("monoText")
+            meta.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            meta.setWordWrap(True)
+            info_row.addWidget(meta, stretch=1)
+            open_btn = QPushButton("Open")
+            open_btn.setObjectName("linkBtn")
+            open_btn.setCursor(Qt.PointingHandCursor)
+            open_btn.clicked.connect(
+                lambda _=False, p=shot: __import__("subprocess").Popen(
+                    ["open", p]
+                )
+            )
+            info_row.addWidget(open_btn)
+            v.addLayout(info_row)
 
         # User prompt
         ulabel = QLabel("USER")
