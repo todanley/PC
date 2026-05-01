@@ -504,23 +504,65 @@ class TaskRunner(QThread):
                     if verify_path and _click_was_noop(
                         shot, verify_path, cx, cy, (sw, sh)
                     ):
-                        last_click_was_noop = True
-                        pending_feedback = (
-                            f"Your click at ({cx},{cy}) produced no visible "
-                            "change in the area around that point. Two cases:\n"
-                            "  (a) Target was a TEXT INPUT (search box, "
-                            "address bar, comment field, etc.). Empty inputs "
-                            "only show a blinking cursor when focused, which "
-                            "this detector can miss. If that was your intent, "
-                            "your NEXT action should be `type` with the text "
-                            "to enter — do NOT re-click a different spot.\n"
-                            "  (b) You missed a button / hit dead area. In "
-                            "that case re-localize from the next screenshot "
-                            "and try a different coordinate.\n"
-                            "Pick (a) or (b) based on what you were trying "
-                            "to click. Do not increment progress for the "
-                            "click itself if it failed."
-                        )
+                        # Auto-retry at small offsets first. The model's
+                        # 0-1000 normalized coord has ~4 px precision per
+                        # unit on a 3840-wide screen, so small targets like
+                        # `<` back arrows (~30 px) often get missed by 10-25
+                        # px even when the model is "mostly right". A short
+                        # fan-out of nearby points usually rescues the click
+                        # without involving the model.
+                        rescued = False
+                        for ox, oy in (
+                            ( 18,   0), (-18,   0),
+                            (  0, -18), (  0,  18),
+                            ( 14,  14), (-14,  14),
+                            ( 14, -14), (-14, -14),
+                        ):
+                            rx = max(0, min(sw - 1, cx + ox))
+                            ry = max(0, min(sh - 1, cy + oy))
+                            try:
+                                if action.get("action") == "double_click":
+                                    inp.double_click(rx, ry)
+                                else:
+                                    inp.click(rx, ry)
+                            except Exception:
+                                continue
+                            time.sleep(_POST_ACTION_DELAY_S)
+                            try:
+                                screen.capture(verify_path)
+                            except Exception:
+                                continue
+                            if not _click_was_noop(
+                                shot, verify_path, cx, cy, (sw, sh)
+                            ):
+                                rescued = True
+                                # Treat the rescue offset as the effective
+                                # click target for the smart-scroll fallback.
+                                last_click_xy = (rx, ry)
+                                break
+                        if rescued:
+                            last_click_was_noop = False
+                        else:
+                            last_click_was_noop = True
+                            pending_feedback = (
+                                f"Your click at ({cx},{cy}) produced no visible "
+                                "change in the area around that point, AND the "
+                                "runner's auto-retry at 8 nearby offsets "
+                                "(±14-18 px) all also failed. Two cases:\n"
+                                "  (a) Target was a TEXT INPUT (search box, "
+                                "address bar, comment field, etc.). Empty inputs "
+                                "only show a blinking cursor when focused, which "
+                                "this detector can miss. If that was your intent, "
+                                "your NEXT action should be `type` with the text "
+                                "to enter — do NOT re-click a different spot.\n"
+                                "  (b) You truly missed by more than ~25 px or "
+                                "the element wasn't clickable. Re-localize from "
+                                "the next screenshot and try a meaningfully "
+                                "different coordinate.\n"
+                                "Pick (a) or (b) based on what you were trying "
+                                "to click. Do not increment progress for the "
+                                "click itself if it failed."
+                            )
                     else:
                         last_click_was_noop = False
             else:
