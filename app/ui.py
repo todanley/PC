@@ -241,6 +241,12 @@ class MainWindow(QMainWindow):
 
         ctrl_row.addStretch(1)
 
+        self.debug_btn = QPushButton("调试")
+        self.debug_btn.setObjectName("linkBtn")
+        self.debug_btn.setCheckable(True)
+        self.debug_btn.toggled.connect(self._on_toggle_debug)
+        ctrl_row.addWidget(self.debug_btn)
+
         self.sys_btn = QPushButton("查看系统提示")
         self.sys_btn.setObjectName("linkBtn")
         self.sys_btn.clicked.connect(self._on_show_system)
@@ -265,8 +271,8 @@ class MainWindow(QMainWindow):
         lv.addWidget(self.log, stretch=1)
         splitter.addWidget(left)
 
-        right = QWidget()
-        rv = QVBoxLayout(right)
+        self._debug_panel = QWidget()
+        rv = QVBoxLayout(self._debug_panel)
         rv.setContentsMargins(0, 0, 0, 0)
         rv.setSpacing(6)
         conv_label = QLabel("对话与调试")
@@ -281,8 +287,11 @@ class MainWindow(QMainWindow):
         self._conv_layout.addStretch(1)  # bottom spacer; cards inserted before it
         self.conv_scroll.setWidget(self._conv_inner)
         rv.addWidget(self.conv_scroll, stretch=1)
-        splitter.addWidget(right)
+        splitter.addWidget(self._debug_panel)
+        # Hidden by default — the "调试" toggle in the controls row shows it.
+        self._debug_panel.hide()
 
+        self._splitter = splitter
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         splitter.setSizes([320, 640])
@@ -371,12 +380,37 @@ class MainWindow(QMainWindow):
         if prog:
             self._append_log(f"     [进度] {prog}")
 
+    def _on_toggle_debug(self, checked: bool):
+        """Show / hide the right-hand debug pane (per-turn cards with
+        screenshot + USER + ASSISTANT sections). The activity log on the
+        left stays visible either way."""
+        if checked:
+            self._debug_panel.show()
+            # Restore a sensible split; if the user dragged it earlier,
+            # this resets it to a usable proportion.
+            self._splitter.setSizes([320, 640])
+        else:
+            self._debug_panel.hide()
+
     def _on_turn_logged(self, payload: dict):
-        # Conversation panel is hidden — capture system prompt for any
-        # internal use but don't render cards.
         sysp = payload.get("system_prompt")
         if sysp:
             self._system_prompt = sysp
+        card = _TurnCard(payload)
+        # Insert above the trailing stretch spacer.
+        self._conv_layout.insertWidget(self._conv_layout.count() - 1, card)
+        # Auto-scroll so the new card is visible. setValue(maximum) is
+        # racy — Qt hasn't finished computing the new max when we ask for
+        # it, even with QTimer(0). Use ensureWidgetVisible() which waits
+        # until the inner widget is laid out, plus a delayed
+        # belt-and-suspenders setValue() to cover the case where the new
+        # card's height grows after the first visibility request.
+        def _scroll_to_card():
+            self.conv_scroll.ensureWidgetVisible(card, 0, 0)
+            bar = self.conv_scroll.verticalScrollBar()
+            bar.setValue(bar.maximum())
+        QTimer.singleShot(0, _scroll_to_card)
+        QTimer.singleShot(80, _scroll_to_card)
 
     def _on_finished_ok(self, msg: str):
         self._append_log(f"✓  完成：{msg}")
