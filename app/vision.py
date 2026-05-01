@@ -101,7 +101,8 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 {{
   "action": "click" | "double_click" | "type" | "key" | "scroll" | "drag" | "wait" | "done",
-  "x": <num>, "y": <num>,           // for click / double_click
+  "x": <num>, "y": <num>,           // for click / double_click — center of the target element
+  "box": [<x1>, <y1>, <x2>, <y2>],  // OPTIONAL but STRONGLY RECOMMENDED for click / double_click: the bounding box of the target element (top-left to bottom-right). Same coord convention as x/y. The runner uses this to auto-rescue near-misses: if your center click hits dead space, it silently retries at the four corners of this box (slightly inset). Costs you nothing to provide — just look at the element's edges in the screenshot. Skip only when no clear bounding box exists (e.g. clicking blank canvas to dismiss a popover).
   "text": "<string>",               // for type
   "key": "<combo>",                 // for key, e.g. "{primary_mod}+space", "enter"
   "direction": "up" | "down",       // for scroll
@@ -264,6 +265,16 @@ class VisionClient:
         # routed Gemini through the normalized branch and passed Kimi
         # through unchanged, which silently mis-placed every Kimi click.
         gemini_norm = PROVIDER in ("google", "gemini", "moonshot")
+
+        def _convert(v: float, logical_dim: int, image_dim: int) -> int:
+            if 0 <= v <= 1.5:
+                px = round(v * logical_dim)
+            elif gemini_norm:
+                px = round(v / 1000 * image_dim / self.scale)
+            else:
+                px = round(v / self.scale)
+            return max(0, min(logical_dim - 1, px))
+
         # x/y for click/type/scroll, plus x1/y1/x2/y2 for drag.
         for k, logical_dim, image_dim in (
             ("x", self.logical_w, self.image_w),
@@ -278,13 +289,21 @@ class VisionClient:
             v = action.get(k)
             if not isinstance(v, (int, float)):
                 continue
-            if 0 <= v <= 1.5:
-                px = round(v * logical_dim)
-            elif gemini_norm:
-                px = round(v / 1000 * image_dim / self.scale)
-            else:
-                px = round(v / self.scale)
-            action[k] = max(0, min(logical_dim - 1, px))
+            action[k] = _convert(v, logical_dim, image_dim)
+
+        # `box: [x1, y1, x2, y2]` — bounding box of the click target, used
+        # by the runner's noop-rescue. Convert each corner pair the same
+        # way as the standalone x/y.
+        box = action.get("box")
+        if (isinstance(box, (list, tuple)) and len(box) == 4
+                and all(isinstance(v, (int, float)) for v in box)):
+            bx1 = _convert(box[0], self.logical_w, self.image_w)
+            by1 = _convert(box[1], self.logical_h, self.image_h)
+            bx2 = _convert(box[2], self.logical_w, self.image_w)
+            by2 = _convert(box[3], self.logical_h, self.image_h)
+            # Normalize so x1<=x2, y1<=y2 (some models swap).
+            action["box"] = [min(bx1, bx2), min(by1, by2),
+                             max(bx1, bx2), max(by1, by2)]
 
     def _encode_image(self, screenshot_path: str) -> tuple[str, str]:
         """Encode the raw screencapture as JPEG without resizing. Steps down

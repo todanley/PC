@@ -504,22 +504,55 @@ class TaskRunner(QThread):
                     if verify_path and _click_was_noop(
                         shot, verify_path, cx, cy, (sw, sh)
                     ):
-                        # Auto-retry at small offsets first. The model's
-                        # 0-1000 normalized coord has ~4 px precision per
-                        # unit on a 3840-wide screen, so small targets like
-                        # `<` back arrows (~30 px) often get missed by 10-25
-                        # px even when the model is "mostly right". A short
-                        # fan-out of nearby points usually rescues the click
-                        # without involving the model.
+                        # Build the rescue target list, in priority order:
+                        #
+                        #  1. The 4 corners of the model-supplied bounding
+                        #     box `box: [x1,y1,x2,y2]`, slightly inset so
+                        #     they land INSIDE the box rather than tangent
+                        #     to its edge. Best signal we have — the model
+                        #     told us "this is roughly where the element
+                        #     is", so sampling inside that region is the
+                        #     highest-confidence retry.
+                        #
+                        #  2. Eight ±14-18 px offsets around the original
+                        #     click point. Catches the common "model was
+                        #     mostly right but rounded by a few px" case
+                        #     even when no box was provided.
+                        rescue_targets: list[tuple[float, float]] = []
+                        box = action.get("box")
+                        if (isinstance(box, (list, tuple)) and len(box) == 4
+                                and all(isinstance(v, (int, float)) for v in box)):
+                            bx1, by1, bx2, by2 = box
+                            ix = max(2.0, (bx2 - bx1) * 0.10)
+                            iy = max(2.0, (by2 - by1) * 0.10)
+                            rescue_targets.extend([
+                                (bx1 + ix, by1 + iy),  # top-left
+                                (bx2 - ix, by1 + iy),  # top-right
+                                (bx1 + ix, by2 - iy),  # bottom-left
+                                (bx2 - ix, by2 - iy),  # bottom-right
+                            ])
+                        rescue_targets.extend([
+                            (cx + 18, cy),       (cx - 18, cy),
+                            (cx,      cy - 18),  (cx,      cy + 18),
+                            (cx + 14, cy + 14),  (cx - 14, cy + 14),
+                            (cx + 14, cy - 14),  (cx - 14, cy - 14),
+                        ])
+                        # Dedupe (rounded to nearest int) so corners don't
+                        # double-up with the offset fallbacks if they happen
+                        # to coincide.
+                        seen: set[tuple[int, int]] = set()
+                        deduped: list[tuple[float, float]] = []
+                        for tx, ty in rescue_targets:
+                            key = (round(tx), round(ty))
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            deduped.append((tx, ty))
+
                         rescued = False
-                        for ox, oy in (
-                            ( 18,   0), (-18,   0),
-                            (  0, -18), (  0,  18),
-                            ( 14,  14), (-14,  14),
-                            ( 14, -14), (-14, -14),
-                        ):
-                            rx = max(0, min(sw - 1, cx + ox))
-                            ry = max(0, min(sh - 1, cy + oy))
+                        for tx, ty in deduped:
+                            rx = max(0, min(sw - 1, tx))
+                            ry = max(0, min(sh - 1, ty))
                             try:
                                 if action.get("action") == "double_click":
                                     inp.double_click(rx, ry)
@@ -536,8 +569,6 @@ class TaskRunner(QThread):
                                 shot, verify_path, cx, cy, (sw, sh)
                             ):
                                 rescued = True
-                                # Treat the rescue offset as the effective
-                                # click target for the smart-scroll fallback.
                                 last_click_xy = (rx, ry)
                                 break
                         if rescued:
