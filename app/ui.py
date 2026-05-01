@@ -29,15 +29,15 @@ def _replay_move_to(x: float, y: float):
 
 DARK_QSS = """
 QMainWindow, QWidget { background: #0f1115; color: #e6e8eb; }
-QLabel { color: #e6e8eb; }
+QLabel { color: #e6e8eb; font-size: 27px; }
 QPlainTextEdit {
-    background: #1a1d23; border: 1px solid #2a2f38; border-radius: 8px;
-    padding: 10px; color: #e6e8eb; font-size: 18px;
+    background: #1a1d23; border: 1px solid #2a2f38; border-radius: 12px;
+    padding: 18px; color: #e6e8eb; font-size: 30px;
 }
 QPlainTextEdit:focus { border: 1px solid #5a8dff; }
 QPushButton {
-    background: #5a8dff; color: white; border: none; border-radius: 8px;
-    padding: 10px 22px; font-weight: 600; font-size: 18px;
+    background: #5a8dff; color: white; border: none; border-radius: 12px;
+    padding: 17px 38px; font-weight: 600; font-size: 30px;
 }
 QPushButton:hover { background: #6a9aff; }
 QPushButton:pressed { background: #4a7def; }
@@ -165,8 +165,8 @@ class _TurnCard(QFrame):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Phantom-Click")
-        self.setMinimumSize(900, 720)
+        self.setWindowTitle("噜噜机器人")
+        self.setMinimumSize(1082, 608)
         self.setStyleSheet(DARK_QSS)
         self._runner: TaskRunner | None = None
         self._system_prompt: str = ""
@@ -178,36 +178,36 @@ class MainWindow(QMainWindow):
         layout.setSpacing(14)
 
         # Title
-        title = QLabel("Phantom-Click")
-        title.setFont(QFont("", 29, QFont.Bold))
+        title = QLabel("噜噜机器人")
+        title.setFont(QFont("", 49, QFont.Bold))
         layout.addWidget(title)
 
-        sub = QLabel("Tell me what to do, I'll take over your screen.")
-        sub.setStyleSheet("color: #8b9099; font-size: 17px;")
+        sub = QLabel("告诉我要做什么，我来替你操作电脑。")
+        sub.setStyleSheet("color: #8b9099; font-size: 29px;")
         layout.addWidget(sub)
 
         layout.addSpacing(6)
 
         # Task input
-        prompt_label = QLabel("What should I do?")
+        prompt_label = QLabel("想让我做什么？")
         layout.addWidget(prompt_label)
 
         self.task_input = QPlainTextEdit()
         self.task_input.setPlaceholderText(
-            'e.g., "Open Calculator and compute 17 × 24"'
+            '例如："打开计算器，计算 17 × 24"'
         )
-        self.task_input.setFixedHeight(90)
+        self.task_input.setFixedHeight(152)
         layout.addWidget(self.task_input)
 
         # Controls row
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(10)
 
-        self.run_btn = QPushButton("▶  Run")
+        self.run_btn = QPushButton("▶  运行")
         self.run_btn.clicked.connect(self._on_run)
         ctrl_row.addWidget(self.run_btn)
 
-        self.stop_btn = QPushButton("■  Stop")
+        self.stop_btn = QPushButton("■  停止")
         self.stop_btn.setObjectName("stopBtn")
         self.stop_btn.setEnabled(False)
         self.stop_btn.clicked.connect(self._on_stop)
@@ -215,55 +215,24 @@ class MainWindow(QMainWindow):
 
         ctrl_row.addStretch(1)
 
-        self.sys_btn = QPushButton("View system prompt")
-        self.sys_btn.setObjectName("linkBtn")
-        self.sys_btn.clicked.connect(self._on_show_system)
-        ctrl_row.addWidget(self.sys_btn)
-
         layout.addLayout(ctrl_row)
+        layout.addSpacing(8)
 
-        layout.addSpacing(6)
-
-        # Activity log + Conversation, side-by-side via splitter so the
-        # user can resize. Activity is brief; Conversation shows the full
-        # prompt/screenshot/response per turn.
-        splitter = QSplitter(Qt.Horizontal)
-
-        # Left: activity log (brief)
-        left = QWidget()
-        lv = QVBoxLayout(left)
-        lv.setContentsMargins(0, 0, 0, 0)
-        lv.setSpacing(6)
-        log_label = QLabel("Activity")
-        log_label.setStyleSheet("color: #8b9099; font-size: 16px;")
-        lv.addWidget(log_label)
+        # User-facing progress panel — shows only what the agent is trying
+        # to do (点击/输入/按键/...). Internal AI chatter (思考中/截图中/
+        # recording paths) is filtered out in _on_step_started.
+        log_label = QLabel("进度")
+        log_label.setStyleSheet("color: #8b9099; font-size: 22px;")
+        layout.addWidget(log_label)
         self.log = QListWidget()
-        lv.addWidget(self.log, stretch=1)
-        splitter.addWidget(left)
+        layout.addWidget(self.log, stretch=1)
 
-        # Right: conversation panel (rich)
-        right = QWidget()
-        rv = QVBoxLayout(right)
-        rv.setContentsMargins(0, 0, 0, 0)
-        rv.setSpacing(6)
-        conv_label = QLabel("Conversation")
-        conv_label.setStyleSheet("color: #8b9099; font-size: 16px;")
-        rv.addWidget(conv_label)
-        self.conv_scroll = QScrollArea()
-        self.conv_scroll.setWidgetResizable(True)
+        # Conversation panel still hidden — keep stubs so signal handlers
+        # don't crash when they reference these widgets.
         self._conv_inner = QWidget()
         self._conv_layout = QVBoxLayout(self._conv_inner)
-        self._conv_layout.setContentsMargins(4, 4, 4, 4)
-        self._conv_layout.setSpacing(10)
-        self._conv_layout.addStretch(1)  # bottom spacer; cards inserted before it
-        self.conv_scroll.setWidget(self._conv_inner)
-        rv.addWidget(self.conv_scroll, stretch=1)
-        splitter.addWidget(right)
-
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([320, 640])
-        layout.addWidget(splitter, stretch=1)
+        self._conv_layout.addStretch(1)
+        self.conv_scroll = QScrollArea()
 
     def _append_log(self, text: str, color: str = "#c9cdd4"):
         item = QListWidgetItem(text)
@@ -282,14 +251,14 @@ class MainWindow(QMainWindow):
     def _on_run(self):
         task = self.task_input.toPlainText().strip()
         if not task:
-            self._append_log("[!] Type a task first.")
+            self._append_log("[!] 请先输入任务。")
             return
         if self._runner and self._runner.isRunning():
             return
 
         self.log.clear()
         self._clear_conversation()
-        self._append_log(f"▶  Starting: {task}")
+        self._append_log(f"▶  开始：{task}")
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.task_input.setReadOnly(True)
@@ -305,7 +274,7 @@ class MainWindow(QMainWindow):
     def _on_stop(self):
         if self._runner:
             self._runner.cancel()
-            self._append_log("[stop requested — finishing current step…]")
+            self._append_log("[已请求停止 — 正在结束当前步骤…]")
             self.stop_btn.setEnabled(False)
 
     def _on_show_system(self):
@@ -313,51 +282,66 @@ class MainWindow(QMainWindow):
         dlg.exec()
 
     def _on_step_started(self, step: int, msg: str):
-        self._append_log(msg)
+        # Suppress all "I'm working" chatter — recorder paths, screenshot
+        # captures, vision calls. Users only see WHAT the agent does, not
+        # the AI plumbing. Action lines come through _on_step_done.
+        return
 
     def _on_step_done(self, step: int, action: dict):
         act = action.get("action", "?")
         reason = action.get("reasoning", "")
+        label = {
+            "click": "点击", "double_click": "双击", "type": "输入",
+            "key": "按键", "scroll": "滚动", "drag": "拖动",
+            "wait": "等待", "done": "完成",
+            "rejected_menubar_click": "已拒绝（菜单栏区域）",
+            "suppressed_repeat_click": "已忽略（重复点击）",
+        }.get(act, act)
         if act == "click":
-            self._append_log(f"  → click ({action.get('x')},{action.get('y')})  — {reason}")
+            detail = f"({action.get('x')},{action.get('y')})"
         elif act == "type":
-            self._append_log(f"  → type {action.get('text','')!r}  — {reason}")
+            detail = repr(action.get("text", ""))
         elif act == "key":
-            self._append_log(f"  → key {action.get('key','')!r}  — {reason}")
+            detail = repr(action.get("key", ""))
         elif act == "scroll":
-            self._append_log(f"  → scroll {action.get('direction','')}  — {reason}")
+            detail = action.get("direction", "")
+        elif act == "drag":
+            detail = f"({action.get('x1')},{action.get('y1')})→({action.get('x2')},{action.get('y2')})"
         else:
-            self._append_log(f"  → {act}  — {reason}")
+            detail = ""
+        line = f"  → {label} {detail}".rstrip()
+        if reason:
+            line += f"  — {reason}"
+        self._append_log(line)
         prog = action.get("progress")
         if prog:
-            self._append_log(f"     [progress] {prog}")
+            self._append_log(f"     [进度] {prog}")
 
     def _on_turn_logged(self, payload: dict):
+        # Conversation panel is hidden — capture system prompt for any
+        # internal use but don't render cards.
         sysp = payload.get("system_prompt")
         if sysp:
             self._system_prompt = sysp
-        card = _TurnCard(payload)
-        # Insert above the trailing stretch spacer.
-        self._conv_layout.insertWidget(self._conv_layout.count() - 1, card)
-        # Auto-scroll so the new card is visible. setValue(maximum) is
-        # racy — Qt hasn't finished computing the new max when we ask for
-        # it, even with QTimer(0). Use ensureWidgetVisible() which waits
-        # until the inner widget is laid out, plus a delayed
-        # belt-and-suspenders setValue() to cover the case where the new
-        # card's height grows after the first visibility request.
-        def _scroll_to_card():
-            self.conv_scroll.ensureWidgetVisible(card, 0, 0)
-            bar = self.conv_scroll.verticalScrollBar()
-            bar.setValue(bar.maximum())
-        QTimer.singleShot(0, _scroll_to_card)
-        QTimer.singleShot(80, _scroll_to_card)
 
     def _on_finished_ok(self, msg: str):
-        self._append_log(f"✓  Done: {msg}")
+        self._append_log(f"✓  完成：{msg}")
         self._reset_buttons()
 
     def _on_failed(self, msg: str):
-        self._append_log(f"✗  {msg}")
+        # Strip internal run-dir / video paths from failure messages so the
+        # demo UI stays clean. Keep the human-readable head before the colon.
+        clean = msg
+        for marker in ("Run dir:", "Video:", "/var/folders/", "/tmp/"):
+            i = clean.find(marker)
+            if i >= 0:
+                clean = clean[:i].rstrip(" ·•")
+                break
+        if clean.startswith("cancelled"):
+            clean = "已取消"
+        elif clean.startswith("stuck"):
+            clean = "卡住了，已自动停止"
+        self._append_log(f"✗  {clean}")
         self._reset_buttons()
 
     def _reset_buttons(self):

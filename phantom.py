@@ -29,6 +29,7 @@ from Quartz import (
     kCGEventMouseMoved,
     kCGEventLeftMouseDown,
     kCGEventLeftMouseUp,
+    kCGEventLeftMouseDragged,
     kCGEventRightMouseDown,
     kCGEventRightMouseUp,
     kCGEventScrollWheel,
@@ -137,6 +138,40 @@ class PhantomInput:
 
         up = CGEventCreateMouseEvent(self._source, kCGEventLeftMouseUp, point, kCGMouseButtonLeft)
         CGEventSetIntegerValueField(up, Quartz.kCGMouseEventClickState, 2)
+        CGEventPost(kCGHIDEventTap, up)
+
+    def drag(self, x1: float, y1: float, x2: float, y2: float,
+             duration: float = 0.6):
+        """Press at (x1,y1), drag to (x2,y2), release. Used for slider
+        CAPTCHAs and other "hold-and-move" UI. Posts left-mouse-dragged
+        events along the path so apps that distinguish drag from move
+        (most CAPTCHA puzzles do) accept the gesture."""
+        self.move_to(x1, y1)
+        time.sleep(random.uniform(0.04, 0.1))
+        start = Quartz.CGPointMake(x1, y1)
+        down = CGEventCreateMouseEvent(self._source, kCGEventLeftMouseDown, start, kCGMouseButtonLeft)
+        CGEventPost(kCGHIDEventTap, down)
+        time.sleep(random.uniform(0.06, 0.12))
+
+        steps = max(20, int(duration * 60))
+        step_delay = duration / steps
+        # Slight bezier curve so the path doesn't look mechanically straight.
+        mid_x = (x1 + x2) / 2 + random.uniform(-30, 30)
+        mid_y = (y1 + y2) / 2 + random.uniform(-30, 30)
+        for i in range(1, steps + 1):
+            t = i / steps
+            cx = (1 - t) ** 2 * x1 + 2 * (1 - t) * t * mid_x + t ** 2 * x2
+            cy = (1 - t) ** 2 * y1 + 2 * (1 - t) * t * mid_y + t ** 2 * y2
+            cx += random.gauss(0, 0.5)
+            cy += random.gauss(0, 0.5)
+            point = Quartz.CGPointMake(cx, cy)
+            ev = CGEventCreateMouseEvent(self._source, kCGEventLeftMouseDragged, point, kCGMouseButtonLeft)
+            CGEventPost(kCGHIDEventTap, ev)
+            time.sleep(step_delay)
+        self._current_x, self._current_y = x2, y2
+
+        end = Quartz.CGPointMake(x2, y2)
+        up = CGEventCreateMouseEvent(self._source, kCGEventLeftMouseUp, end, kCGMouseButtonLeft)
         CGEventPost(kCGHIDEventTap, up)
 
     def scroll(self, dx: int = 0, dy: int = -3):

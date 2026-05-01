@@ -51,6 +51,9 @@ class Input:
     def double_click(self, x: float, y: float):
         self._pi.double_click(x, y)
 
+    def drag(self, x1: float, y1: float, x2: float, y2: float):
+        self._pi.drag(float(x1), float(y1), float(x2), float(y2))
+
     def type_text(self, text: str):
         if any(ord(c) > 127 for c in text):
             self._pi.paste_text(text)
