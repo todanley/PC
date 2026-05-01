@@ -87,6 +87,30 @@ Only fall back to `刷新` / refresh AFTER a genuine solve attempt failed
 (the modal didn't dismiss). Two failed solves in a row → the task is
 likely blocked; report and stop instead of looping refresh forever.
 
+## Opening a user's profile from a list
+
+When the task wants you to open a specific user's profile from a list
+(following / followers list, comment authors, search results, suggested
+users, etc.) — ALWAYS click the user's AVATAR, not the username text or
+any other row element. Reasoning:
+
+  • Avatars are the largest consistently-clickable element in a row
+    (~40-60 px squares vs ~12-16 px tall text), so coordinate slop
+    matters less.
+  • Avatar hit-regions are reliably wired to "open profile" across
+    almost every social product. Username text sometimes opens a
+    hover-card, sometimes just selects the text, sometimes does
+    nothing — depends on the platform.
+  • Other row elements (the right-aligned follow / unfollow button,
+    a "remove" / "..." menu, a verified badge) do entirely different
+    things. Clicking near them by mistake mutates state instead of
+    just navigating.
+
+In your action's `x`/`y`, target the visual CENTER of the avatar, not
+its edge. If the row also has a follow/unfollow button you can see,
+make sure your x is well to the LEFT of that button so a small coord
+slop doesn't bleed into it.
+
 ## Avatar-with-plus follow indicator (short-video players)
 
 In a single-video / full-screen video player (TikTok, Douyin, YouTube
