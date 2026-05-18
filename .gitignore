@@ -7,3 +7,11 @@ venv/
 .env
 .env.local
 phantom_run_*/
+
+# Claude Code session metadata
+.claude/
+
+# PyInstaller build artifacts — large, regeneratable
+build/
+dist/
+*.app/

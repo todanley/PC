@@ -1,0 +1,9 @@
+tokens.json
+access.log
+cloudflared.log
+uvicorn.log
+*.pid
+
+# Machine-specific tunnel config — points at the operator's local
+# ~/.cloudflared credentials path. Other operators generate their own.
+cloudflared.yml

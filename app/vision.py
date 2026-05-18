@@ -30,7 +30,16 @@ _MAX_BYTES = 4_500_000
 # if the file would exceed the API's per-image byte cap.
 _JPEG_QUALITY = int(os.environ.get("PHANTOM_JPEG_QUALITY", "75"))
 
-MODEL = os.environ.get("PHANTOM_MODEL", "claude-opus-4-7")
+# Build-time config takes precedence in CN-ship builds. Operator dev mode
+# (env vars set, no baked literals) falls through to PHANTOM_MODEL.
+from app.build_config import BRIDGE_TOKEN, BRIDGE_URL, IS_CN_BUILD
+
+# CN-ship build: pin model + provider + token regardless of env. The whole
+# point is "downloads and runs" — env vars don't exist in the user's world.
+if IS_CN_BUILD:
+    MODEL = os.environ.get("PHANTOM_MODEL_OVERRIDE", "gemini-3-pro-preview")
+else:
+    MODEL = os.environ.get("PHANTOM_MODEL", "claude-opus-4-7")
 ANTHROPIC_VERSION = "2023-06-01"
 
 # Provider routing — picked from MODEL prefix unless PHANTOM_PROVIDER overrides.
@@ -48,6 +57,9 @@ ANTHROPIC_VERSION = "2023-06-01"
 #   REST API via OpenAI-compatible endpoint. ~$0.10/$0.40 per M tokens on
 #   gemini-2.5-flash-lite, fast (~3-5s/turn), no Chromium pop-up.
 def _provider() -> str:
+    # CN-ship builds always route via google → bridge. No env overrides.
+    if IS_CN_BUILD:
+        return "google"
     p = os.environ.get("PHANTOM_PROVIDER", "").lower()
     if p in ("anthropic", "moonshot", "gemini", "google"):
         return p
@@ -66,6 +78,14 @@ API_URL = {
     "moonshot": "https://api.moonshot.ai/v1/chat/completions",
     "google":   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
 }.get(PROVIDER, "https://api.anthropic.com/v1/messages")
+# CN-bridge support: in a CN-ship build, point at the baked bridge URL.
+# In dev, PHANTOM_API_BASE still works as an env override.
+if IS_CN_BUILD:
+    API_URL = BRIDGE_URL.rstrip("/") + "/v1beta/openai/chat/completions"
+else:
+    _API_BASE_OVERRIDE = os.environ.get("PHANTOM_API_BASE", "").strip().rstrip("/")
+    if _API_BASE_OVERRIDE and PROVIDER == "google":
+        API_URL = _API_BASE_OVERRIDE + "/v1beta/openai/chat/completions"
 # Path to the Gemini CLI tool (only used when PROVIDER == "gemini").
 GEMINI_CLI = os.path.expanduser(
     os.environ.get("PHANTOM_GEMINI_CLI", "~/.claude/tools/gemini.py")
@@ -184,7 +204,10 @@ class VisionClient:
         # Per-provider key resolution. The legacy ANTHROPIC_API_KEY env name
         # is reused for moonshot/anthropic for backwards-compat with existing
         # launchers; google uses its own GEMINI_API_KEY so both can coexist.
-        if PROVIDER == "google":
+        # CN-ship builds: baked bridge token always wins — no env var dance.
+        if IS_CN_BUILD:
+            self.api_key = api_key or BRIDGE_TOKEN
+        elif PROVIDER == "google":
             self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         else:
             self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
@@ -452,6 +475,11 @@ class VisionClient:
             else:
                 headers["x-api-key"] = self.api_key
 
+        # Cloudflare's Browser Integrity Check blocks the default urllib UA
+        # ("Python-urllib/3.x") with HTTP 403 error 1010. Any custom UA passes.
+        # We use a versioned phantom-click string so server logs can attribute
+        # traffic to the app version.
+        headers.setdefault("User-Agent", "phantom-click/0.1.0")
         req = urllib.request.Request(
             API_URL, data=json.dumps(body).encode("utf-8"), headers=headers,
         )
