@@ -39,6 +39,9 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
+          # Our requirements file isn't named requirements.txt, so setup-python's
+          # default glob doesn't find anything to hash. Point it explicitly.
+          cache-dependency-path: requirements-app.txt
 
       - name: Install app deps
         # The platform markers in requirements-app.txt cause pip to skip the
