@@ -48,7 +48,21 @@ class Input:
         translated = [_MOD_TRANSLATE.get(p, _KEY_TRANSLATE.get(p, p)) for p in parts]
         pyautogui.hotkey(*translated)
 
-    def scroll(self, direction: str = "down", clicks: int = 3):
+    def drag(self, x1: float, y1: float, x2: float, y2: float):
+        """Press at (x1,y1), drag to (x2,y2), release. For slider CAPTCHAs
+        and similar gestures. pyautogui.dragTo is the equivalent of macOS's
+        bezier-curve drag; it's good enough for the CAPTCHA targets we hit."""
+        pyautogui.moveTo(x1, y1, duration=0.2)
+        pyautogui.dragTo(x2, y2, duration=0.6, button="left")
+
+    def scroll(self, direction: str = "down", clicks: int = 3,
+               x: float | None = None, y: float | None = None):
+        """Scroll. pyautogui.scroll dispatches at the CURRENT cursor position,
+        so to scroll inside a specific element (e.g. a modal that doesn't
+        accept page-level scroll), move the cursor there first — same contract
+        as the macOS layer."""
+        if x is not None and y is not None:
+            pyautogui.moveTo(x, y, duration=0.15)
         pyautogui.scroll(-clicks if direction == "down" else clicks)
 
 

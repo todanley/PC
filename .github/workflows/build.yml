@@ -1,0 +1,69 @@
+name: build
+
+# Two triggers:
+#   • Push a tag like v0.1.0  → full release build of both OSes, artifacts
+#     attached to a draft GitHub Release.
+#   • Manual "Run workflow"   → same matrix, artifacts attached to the run.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # needed for the release upload step
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14         # Apple Silicon runner
+            label: mac
+            script: ./build-mac.sh
+            artifact_path: dist/噜噜机器人-mac.zip
+          - os: windows-latest
+            label: win
+            # PowerShell on Windows; bash on macOS — the call sites differ.
+            script: pwsh -File ./build-win.ps1
+            artifact_path: dist/噜噜机器人-win.zip
+
+    runs-on: ${{ matrix.os }}
+    name: build-${{ matrix.label }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install app deps
+        # The platform markers in requirements-app.txt cause pip to skip the
+        # pyobjc-* lines on Windows and pywin32 on macOS automatically.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-app.txt pyinstaller
+
+      - name: Build
+        env:
+          PHANTOM_BRIDGE_URL: ${{ secrets.PHANTOM_BRIDGE_URL }}
+          PHANTOM_BRIDGE_TOKEN: ${{ secrets.PHANTOM_BRIDGE_TOKEN }}
+        run: ${{ matrix.script }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: phantom-click-${{ matrix.label }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: ${{ matrix.artifact_path }}

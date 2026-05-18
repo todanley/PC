@@ -333,8 +333,7 @@ class TaskRunner(QThread):
             # to the model and it hallucinates coordinates for elements
             # that aren't actually drawn.
             try:
-                inp.scroll  # touch attribute to ensure inp is initialized
-                inp._pi.move_to(self._scroll_default_x, self._scroll_default_y)  # type: ignore[attr-defined]
+                inp.move_to(self._scroll_default_x, self._scroll_default_y)
                 time.sleep(0.25)  # let hover UI paint
             except Exception:
                 pass

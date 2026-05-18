@@ -3,3 +3,13 @@ pyautogui>=0.9.54
 mss>=9.0.1
 Pillow>=10.0
 pyperclip>=1.8.2
+# Used by runner.py for the pixel-diff noop detector.
+numpy>=1.26
+
+# macOS-only: pyobjc-framework bindings for Quartz / AppKit primitives the
+# phantom.py module uses for low-level CGEvent input and screencapture.
+pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"
+pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
+
+# Windows-only: pywin32 backs pyautogui's keyboard/clipboard primitives.
+pywin32>=306; sys_platform == "win32"
