@@ -148,28 +148,135 @@ class Input:
         pyautogui.mouseUp(button="left")
 
     def browser_prelude(self, zoom_steps: int = 3):
-        """One-shot setup for browser-targeted tasks: maximize the focused
-        window via Win+Up (avoids any mouse drift / titlebar misclick), then
-        reset zoom and step it up by `zoom_steps`*10% so fonts and icons are
-        larger — the model localizes small UI targets (back arrows, follow
-        buttons) much more reliably at 130 % than at 100 %.
+        """One-shot setup for browser-targeted tasks. In order:
 
-        Caller's contract: the browser window has focus before this runs.
-        On focused-non-browser windows, Win+Up still maximizes but Ctrl+=
-        is harmless in most apps."""
-        # Maximize. Win+Up: minimized → restored, normal → maximized,
-        # maximized → no-op. Idempotent for our purposes.
-        pyautogui.hotkey("winleft", "up")
-        time.sleep(0.4)
-        # Reset zoom to 100 % so the next steps land on a known starting
-        # point regardless of whatever the user had previously.
+          1. Ensure Chrome is open and frontmost (launches it if not
+             running; restores + focuses an existing window if it is).
+             Keyboard / API only — no mouse clicks on the taskbar.
+          2. Maximize the foreground window via Win32 ShowWindow.
+          3. Reset zoom to 100 % then bump it `zoom_steps`*10 % (default
+             130 %) so fonts and icons are larger — the model localizes
+             small UI targets (back arrows, follow buttons) much more
+             reliably at 130 % than at 100 %.
+
+        Design rule: use keyboard / API for anything that can be reliably
+        reached that way; never use mouse clicks for app focus / launch /
+        zoom because coordinate-based clicks are fragile (DPI, taskbar
+        position, theme).
+
+        Why not Win+Up for maximize: (a) third-party Chinese accelerators
+        (UU加速器 etc.) register Win+Up as a global hotkey, (b) under
+        pyautogui's rapid hotkey delivery the Win keyUp can race with the
+        subsequent `=` press and trigger Windows Magnifier (Win+=). The
+        Win32 ShowWindow API sends zero keyboard events and sidesteps both."""
+        self._ensure_chrome_focused()
+
+        import ctypes
+        SW_MAXIMIZE = 3
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            if hwnd:
+                ctypes.windll.user32.ShowWindow(hwnd, SW_MAXIMIZE)
+            time.sleep(0.30)
+        except Exception:
+            pass
+
+        # Defensive: release any modifier that might still be physically /
+        # logically held from earlier input, so the next hotkey can't be
+        # misread as a Win+ or Alt+ combo. Cheap belt-and-suspenders.
+        for k in ("winleft", "winright", "alt", "altleft", "altright",
+                  "shift", "ctrl"):
+            try:
+                pyautogui.keyUp(k)
+            except Exception:
+                pass
+        time.sleep(0.08)
+
+        # Browser zoom: reset to 100 % then bump. Ctrl+0 / Ctrl+= are
+        # accepted by Chrome, Edge, Firefox, and all major Chinese browsers
+        # (360, QQ, Sogou). No Win-key involvement, no Magnifier risk.
         pyautogui.hotkey("ctrl", "0")
-        time.sleep(0.2)
-        # Zoom in. Browsers accept Ctrl+= as the unshifted-key form of
-        # Ctrl++; pyautogui's `=` maps to the correct VK on Windows.
+        time.sleep(0.20)
         for _ in range(max(0, zoom_steps)):
             pyautogui.hotkey("ctrl", "=")
-            time.sleep(0.10)
+            time.sleep(0.12)
+
+    def _ensure_chrome_focused(self, timeout_s: float = 10.0) -> bool:
+        """Make Chrome the foreground window. Launch it via the OS shell if
+        not already running; restore + bring to front if it is. Returns
+        True iff Chrome ended up focused. Best-effort — failure (Chrome not
+        installed, SetForegroundWindow denied, etc.) is non-fatal; the
+        prelude proceeds and the maximize/zoom land on whatever IS focused.
+        """
+        try:
+            import win32gui
+            import win32con
+        except ImportError:
+            return False
+
+        def find_chrome() -> int | None:
+            """Walk all top-level windows for a visible Chrome one. Chrome
+            sets its main window class to 'Chrome_WidgetWin_1'; the title
+            ends with ' - Google Chrome' (English) or '- Google Chrome'
+            without space in some locales. Match either."""
+            found: list[int] = []
+            def cb(hwnd, _):
+                if not win32gui.IsWindowVisible(hwnd):
+                    return True
+                try:
+                    cls = win32gui.GetClassName(hwnd)
+                    title = win32gui.GetWindowText(hwnd)
+                except Exception:
+                    return True
+                if cls == "Chrome_WidgetWin_1" and title:
+                    found.append(hwnd)
+                return True
+            try:
+                win32gui.EnumWindows(cb, None)
+            except Exception:
+                return None
+            return found[0] if found else None
+
+        hwnd = find_chrome()
+        if hwnd is None:
+            # Not running — launch via the shell. `start chrome` resolves
+            # via the registered HTTP handler / App Paths, so we don't need
+            # an absolute path. CREATE_NO_WINDOW (0x08000000) avoids a
+            # cmd.exe flash; DETACHED_PROCESS (0x00000008) means we don't
+            # block on its exit.
+            import subprocess
+            try:
+                subprocess.Popen(
+                    ["cmd", "/c", "start", "", "chrome"],
+                    creationflags=0x08000000 | 0x00000008,
+                    close_fds=True,
+                )
+            except Exception:
+                return False
+            deadline = time.time() + timeout_s
+            while time.time() < deadline:
+                time.sleep(0.3)
+                hwnd = find_chrome()
+                if hwnd:
+                    break
+            if hwnd is None:
+                return False
+
+        try:
+            # Restore if minimized; then raise to foreground. SetForegroundWindow
+            # has Win32-side restrictions (the calling thread must have
+            # recently received input). For a runner thread kicked off by a
+            # button click that just happened, we're usually inside that
+            # window — it works. If it fails the maximize still runs on the
+            # currently-focused window, which is at least visible.
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+                time.sleep(0.15)
+            win32gui.SetForegroundWindow(hwnd)
+            time.sleep(0.30)
+            return True
+        except Exception:
+            return False
 
     def scroll(self, direction: str = "down", clicks: int = 3,
                x: float | None = None, y: float | None = None):
