@@ -1,5 +1,6 @@
 """PySide6 UI for Phantom-Click."""
 import json
+import os
 import threading
 
 from PySide6.QtCore import Qt, QTimer
@@ -339,6 +340,29 @@ class MainWindow(QMainWindow):
             self._runner.cancel()
             self._append_log("[已请求停止 — 正在结束当前步骤…]")
             self.stop_btn.setEnabled(False)
+
+    def closeEvent(self, event):
+        """Window close handler. If a task is running, an in-flight vision
+        call sits in a blocking urllib socket read for up to several seconds
+        (sometimes 30s+). Qt's QThread::terminate() doesn't interrupt that
+        because pthread_cancel can't break a C-level socket recv. If we let
+        Qt run its destruction sequence anyway, QCoreApplication tears down
+        with the TaskRunner thread still alive — Qt logs that as fatal and
+        aborts the process, producing the shutdown SIGABRT we kept seeing
+        in crash reports.
+
+        Strategy: give the runner a brief window to honor cancel cleanly
+        (good case, no Worker request in flight). If it doesn't return,
+        bypass Qt's destructors entirely with os._exit() — there's no
+        unsaved state at window-close time, and the OS reclaims sockets.
+        """
+        if self._runner and self._runner.isRunning():
+            self._runner.cancel()
+            if not self._runner.wait(3_000):
+                # Vision call mid-flight. Skip Qt cleanup and exit hard.
+                event.accept()
+                os._exit(0)
+        event.accept()
 
     def _on_show_system(self):
         dlg = _SystemPromptDialog(self._system_prompt, self)
