@@ -150,25 +150,28 @@ class Input:
     def browser_prelude(self, zoom_steps: int = 3):
         """One-shot setup for browser-targeted tasks. In order:
 
-          1. Ensure Chrome is open and frontmost (launches it if not
-             running; restores + focuses an existing window if it is).
-             Keyboard / API only — no mouse clicks on the taskbar.
+          1. Ensure Chrome is open and frontmost (Win32 API; no
+             taskbar clicks).
           2. Maximize the foreground window via Win32 ShowWindow.
-          3. Reset zoom to 100 % then bump it `zoom_steps`*10 % (default
-             130 %) so fonts and icons are larger — the model localizes
-             small UI targets (back arrows, follow buttons) much more
-             reliably at 130 % than at 100 %.
+          3. Bump zoom to ~zoom_steps*10 % via Ctrl + mouse-wheel so
+             small UI targets (back arrows, follow buttons) are easier
+             for the vision model to localize. No reset to 100 % first
+             — that requires Ctrl+0 which we're fine with, but the
+             `=` key is avoided entirely.
 
-        Design rule: use keyboard / API for anything that can be reliably
-        reached that way; never use mouse clicks for app focus / launch /
-        zoom because coordinate-based clicks are fragile (DPI, taskbar
-        position, theme).
+        Why no keyboard zoom hotkeys (Ctrl+=, Win+Up, etc.): on CN
+        Windows installs we kept tripping two third-party hotkey
+        consumers:
+          - UU加速器 / 网易UU registers global low-level keyboard
+            hooks. Stray Win-key events (even a bare KEYUP from a
+            "defensive modifier release") pop its accelerator UI.
+          - pyautogui's hotkey delivery has no enforced gap between
+            keyUp(modifier) and the next keyDown. The `=` from a
+            subsequent Ctrl+= can land while Windows still has Win
+            logically held, firing Win+= → Magnifier.
 
-        Why not Win+Up for maximize: (a) third-party Chinese accelerators
-        (UU加速器 etc.) register Win+Up as a global hotkey, (b) under
-        pyautogui's rapid hotkey delivery the Win keyUp can race with the
-        subsequent `=` press and trigger Windows Magnifier (Win+=). The
-        Win32 ShowWindow API sends zero keyboard events and sidesteps both."""
+        Mouse-wheel zoom sidesteps both: no `=` key ever leaves
+        SendInput, and there are no spurious modifier keystrokes."""
         self._ensure_chrome_focused()
 
         import ctypes
@@ -181,25 +184,30 @@ class Input:
         except Exception:
             pass
 
-        # Defensive: release any modifier that might still be physically /
-        # logically held from earlier input, so the next hotkey can't be
-        # misread as a Win+ or Alt+ combo. Cheap belt-and-suspenders.
-        for k in ("winleft", "winright", "alt", "altleft", "altright",
-                  "shift", "ctrl"):
+        # Zoom via Ctrl + wheel. Chrome interprets each wheel tick with
+        # Ctrl held as a 10 % zoom step. We park the cursor in the
+        # window content area first because some apps only honor
+        # Ctrl+wheel when the wheel event is delivered to a child of
+        # the focused window.
+        try:
+            with mss.mss() as sct:
+                mon = sct.monitors[1]
+                cx = mon["width"] // 2
+                cy = mon["height"] // 2
+            pyautogui.moveTo(cx, cy, duration=0)
+            time.sleep(0.05)
+            pyautogui.keyDown("ctrl")
+            time.sleep(0.05)
+            for _ in range(max(0, zoom_steps)):
+                pyautogui.scroll(1)        # one wheel tick up = zoom in
+                time.sleep(0.12)
+            pyautogui.keyUp("ctrl")
+        except Exception:
+            # Best-effort: a zoom failure shouldn't take down the task.
             try:
-                pyautogui.keyUp(k)
+                pyautogui.keyUp("ctrl")
             except Exception:
                 pass
-        time.sleep(0.08)
-
-        # Browser zoom: reset to 100 % then bump. Ctrl+0 / Ctrl+= are
-        # accepted by Chrome, Edge, Firefox, and all major Chinese browsers
-        # (360, QQ, Sogou). No Win-key involvement, no Magnifier risk.
-        pyautogui.hotkey("ctrl", "0")
-        time.sleep(0.20)
-        for _ in range(max(0, zoom_steps)):
-            pyautogui.hotkey("ctrl", "=")
-            time.sleep(0.12)
 
     def _ensure_chrome_focused(self, timeout_s: float = 10.0) -> bool:
         """Make Chrome the foreground window. Launch it via the OS shell if
