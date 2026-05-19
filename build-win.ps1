@@ -1,6 +1,6 @@
 ﻿# PowerShell build script — Windows equivalent of build-mac.sh.
-# Produces dist\噜噜机器人-win.zip with the operator's bridge URL + token
-# baked in.
+# Produces dist\phantom-click.exe (single self-contained onefile binary)
+# with the operator's bridge URL + token baked in.
 #
 # Required env (set by Actions secrets in CI, or `$env:` in PS):
 #   PHANTOM_BRIDGE_URL    — public URL of the operator's bridge
@@ -58,36 +58,26 @@ try {
     Write-Host "-> running PyInstaller (this takes 1-3 min on first build) ..."
     python -m PyInstaller phantom-click.spec --noconfirm --clean
 
-    $appDir = "dist\噜噜机器人"
-    $exePath = "$appDir\phantom-click.exe"
+    # Onefile build: single self-contained .exe in dist/.
+    $exePath = "dist\phantom-click.exe"
     if (-not (Test-Path $exePath)) {
         throw "PyInstaller didn't produce $exePath"
     }
 
-    # --- 4. Zip for distribution ---
-    $zipPath = "dist\噜噜机器人-win.zip"
-    if (Test-Path $zipPath) { Remove-Item $zipPath }
-    # Compress-Archive handles unicode names; the resulting zip extracts cleanly
-    # on macOS/Linux/Windows alike.
-    Compress-Archive -Path $appDir -DestinationPath $zipPath -CompressionLevel Optimal
-
-    $sizeBundle = "{0:N0} MB" -f ((Get-ChildItem $appDir -Recurse | Measure-Object -Property Length -Sum).Sum / 1MB)
-    $sizeZip = "{0:N0} MB" -f ((Get-Item $zipPath).Length / 1MB)
+    $sizeExe = "{0:N0} MB" -f ((Get-Item $exePath).Length / 1MB)
 
     Write-Host ""
     Write-Host "============================================================="
     Write-Host "  build OK"
     Write-Host "============================================================="
-    Write-Host "  bundle      : $appDir ($sizeBundle)"
-    Write-Host "  distribution: $zipPath ($sizeZip)"
-    Write-Host "  baked URL   : $($env:PHANTOM_BRIDGE_URL)"
+    Write-Host "  artifact : $exePath ($sizeExe)"
+    Write-Host "  baked URL: $($env:PHANTOM_BRIDGE_URL)"
     Write-Host ""
-    Write-Host "  CN user flow:"
-    Write-Host "    1. Download $zipPath"
-    Write-Host "    2. Unzip somewhere (e.g. Desktop)"
-    Write-Host "    3. First open of phantom-click.exe: SmartScreen says"
-    Write-Host "       'Windows protected your PC' -> More info -> Run anyway"
-    Write-Host "    4. Type task, press 运行"
+    Write-Host "  User flow:"
+    Write-Host "    1. Hand over $exePath"
+    Write-Host "    2. First open: SmartScreen says 'Windows protected your"
+    Write-Host "       PC' -> More info -> Run anyway"
+    Write-Host "    3. Type task, press 运行"
     Write-Host "============================================================="
 } finally {
     # Always restore build_config so the secret doesn't end up committed.

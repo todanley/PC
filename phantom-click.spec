@@ -61,42 +61,52 @@ a = Analysis(
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-exe_kwargs = dict(
-    exclude_binaries=True,
-    name='phantom-click',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=False,
-    console=False,          # no terminal window on either platform
-    disable_windowed_traceback=False,
-)
-if IS_MAC:
-    exe_kwargs.update(
-        target_arch=None,       # universal2 would double size; arm64 is fine
-        codesign_identity='-',  # ad-hoc — real signing happens in build-mac.sh
+if IS_WIN:
+    # Onefile: single self-contained .exe in dist/. PyInstaller's bootloader
+    # self-extracts to %TEMP%\_MEI<rand> on launch. Slower cold-start than
+    # onedir but ships as one file the user can double-click.
+    exe = EXE(
+        pyz,
+        a.scripts,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        [],
+        name='phantom-click',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        runtime_tmpdir=None,
+        console=False,
+        disable_windowed_traceback=False,
+    )
+else:
+    # macOS: onedir → COLLECT → BUNDLE into .app
+    exe = EXE(
+        pyz, a.scripts, [],
+        exclude_binaries=True,
+        name='phantom-click',
+        debug=False,
+        bootloader_ignore_signals=False,
+        strip=False,
+        upx=False,
+        console=False,
+        disable_windowed_traceback=False,
+        target_arch=None,
+        codesign_identity='-',
         entitlements_file=None,
     )
-
-exe = EXE(pyz, a.scripts, [], **exe_kwargs)
-
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    # Folder name PyInstaller emits inside dist/. On Windows this folder IS
-    # the deliverable; on macOS it gets wrapped by BUNDLE() below into an
-    # .app, and the folder name doesn't matter to the user.
-    name='噜噜机器人' if IS_WIN else 'phantom-click',
-)
-
-# BUNDLE() is macOS-only — wrapping a COLLECT into an .app makes no sense on
-# Windows (where the deliverable is a folder containing the .exe). Guard it.
-if IS_MAC:
+    coll = COLLECT(
+        exe,
+        a.binaries,
+        a.zipfiles,
+        a.datas,
+        strip=False,
+        upx=False,
+        upx_exclude=[],
+        name='phantom-click',
+    )
     app = BUNDLE(
         coll,
         name='噜噜机器人.app',

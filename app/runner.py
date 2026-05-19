@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image, ImageChops
 from PySide6.QtCore import QThread, Signal
 
+from . import humanize
 from .platform_layer import Input, Screen
 from .vision import VisionClient, VisionError
 
@@ -210,6 +211,10 @@ class TaskRunner(QThread):
         # ffmpeg isn't available.
         self._recorder: subprocess.Popen | None = None
         self._recorder_path: str | None = None
+        # Behavioral pacing: per-task rate limiter + persistent hourly cap.
+        # See app/humanize.py for the threat-model rationale.
+        self._rate_limiter = humanize.RateLimiter()
+        self._task_counter = humanize.TaskCounter()
 
     def cancel(self):
         self._cancel = True
@@ -282,6 +287,16 @@ class TaskRunner(QThread):
                 self.step_started.emit(0, f"📹 Saved → {self._recorder_path}")
 
     def _run_inner(self):
+        # B7: refuse to start if the hourly task cap is reached. Persisted
+        # across runs so the user can't bypass it by closing and reopening.
+        ok, count = self._task_counter.check_and_record()
+        if not ok:
+            self.failed.emit(
+                f"每小时任务上限已达（{count}/{self._task_counter.max_per_hour}）— "
+                "请稍后再试。"
+            )
+            return
+
         try:
             screen = Screen()
             inp = Input()
@@ -297,7 +312,15 @@ class TaskRunner(QThread):
         self._scroll_default_x = round(sw * 0.55)
         self._scroll_default_y = round(sh * 0.55)
 
+        # B5: brief warm-up before the first action so we don't fire at t=0
+        # (a robot signature). Real users take a moment to orient.
+        warm = humanize.warmup_pause_s()
+        if warm > 0:
+            time.sleep(warm)
+
         step = 0
+        last_action_type: str = "click"
+        actions_since_break: int = 0
         last_bucket: tuple[int, int] | None = None
         # True when the most recent dispatched click was detected by the
         # post-action verifier as a no-op. Used to disable the same-bucket
@@ -324,6 +347,22 @@ class TaskRunner(QThread):
             if self._cancel:
                 self.failed.emit("cancelled")
                 return
+
+            # B1/B2/B3/B6: humanized inter-action pacing. Skipped on the
+            # first iteration (warm-up already covered that). The rate
+            # limiter enforces the per-minute cap; inter_action_pause
+            # adds an action-type-aware random gap; maybe_subtask_break
+            # occasionally inserts a 15-60 s "user got distracted" pause.
+            if step > 1:
+                self._rate_limiter.wait()
+                pause = humanize.inter_action_pause_s(last_action_type)
+                if pause > 0:
+                    time.sleep(pause)
+                actions_since_break += 1
+                brk = humanize.maybe_subtask_break_s(actions_since_break)
+                if brk > 0:
+                    time.sleep(brk)
+                    actions_since_break = 0
 
             _refocus()
             # Park the cursor over the typical content area before
@@ -353,6 +392,11 @@ class TaskRunner(QThread):
                 self.failed.emit(f"vision call failed: {e}")
                 return
             pending_feedback = None
+            # Remember the action type so the NEXT turn's inter-action pause
+            # can match (type/drag get a longer "thinking" prefix, scroll is
+            # short, etc.). Set before any continue/return so the next
+            # iteration's pacing always has a defined value.
+            last_action_type = action.get("action") or last_action_type
 
             # Surface the raw turn (prompt + screenshot + response) to the UI.
             lt = client.last_turn or {}
