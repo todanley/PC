@@ -1,4 +1,4 @@
-# PowerShell build script — Windows equivalent of build-mac.sh.
+﻿# PowerShell build script — Windows equivalent of build-mac.sh.
 # Produces dist\噜噜机器人-win.zip with the operator's bridge URL + token
 # baked in.
 #
