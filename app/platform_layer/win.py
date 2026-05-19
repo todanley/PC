@@ -147,6 +147,30 @@ class Input:
         time.sleep(humanize.click_dwell_s())
         pyautogui.mouseUp(button="left")
 
+    def browser_prelude(self, zoom_steps: int = 3):
+        """One-shot setup for browser-targeted tasks: maximize the focused
+        window via Win+Up (avoids any mouse drift / titlebar misclick), then
+        reset zoom and step it up by `zoom_steps`*10% so fonts and icons are
+        larger — the model localizes small UI targets (back arrows, follow
+        buttons) much more reliably at 130 % than at 100 %.
+
+        Caller's contract: the browser window has focus before this runs.
+        On focused-non-browser windows, Win+Up still maximizes but Ctrl+=
+        is harmless in most apps."""
+        # Maximize. Win+Up: minimized → restored, normal → maximized,
+        # maximized → no-op. Idempotent for our purposes.
+        pyautogui.hotkey("winleft", "up")
+        time.sleep(0.4)
+        # Reset zoom to 100 % so the next steps land on a known starting
+        # point regardless of whatever the user had previously.
+        pyautogui.hotkey("ctrl", "0")
+        time.sleep(0.2)
+        # Zoom in. Browsers accept Ctrl+= as the unshifted-key form of
+        # Ctrl++; pyautogui's `=` maps to the correct VK on Windows.
+        for _ in range(max(0, zoom_steps)):
+            pyautogui.hotkey("ctrl", "=")
+            time.sleep(0.10)
+
     def scroll(self, direction: str = "down", clicks: int = 3,
                x: float | None = None, y: float | None = None):
         """Variable-speed scroll: dispatch wheel ticks one at a time with

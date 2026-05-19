@@ -312,6 +312,20 @@ class TaskRunner(QThread):
         self._scroll_default_x = round(sw * 0.55)
         self._scroll_default_y = round(sh * 0.55)
 
+        # Browser prelude: maximize the focused window + bump zoom so the
+        # model has bigger targets to localize. Fires once per task before
+        # any vision call. Disabled via PHANTOM_BROWSER_PRELUDE=0; zoom
+        # level tunable via PHANTOM_BROWSER_ZOOM_STEPS (each step is +10 %).
+        if os.environ.get("PHANTOM_BROWSER_PRELUDE", "1") != "0":
+            if hasattr(inp, "browser_prelude"):
+                steps = int(os.environ.get("PHANTOM_BROWSER_ZOOM_STEPS", "3"))
+                try:
+                    inp.browser_prelude(zoom_steps=steps)
+                except Exception:
+                    # Prelude is a nice-to-have, not load-bearing — never
+                    # let a stray IME / focus issue kill the whole run.
+                    pass
+
         # B5: brief warm-up before the first action so we don't fire at t=0
         # (a robot signature). Real users take a moment to orient.
         warm = humanize.warmup_pause_s()
