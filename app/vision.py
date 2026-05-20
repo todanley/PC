@@ -43,7 +43,7 @@ QUOTA_MSG = "额度已用完，请输入新的令牌"
 # CN-ship build: pin model + provider + token regardless of env. The whole
 # point is "downloads and runs" — env vars don't exist in the user's world.
 if IS_CN_BUILD:
-    MODEL = os.environ.get("PHANTOM_MODEL_OVERRIDE", "gemini-3-pro-preview")
+    MODEL = os.environ.get("PHANTOM_MODEL_OVERRIDE", "gemini-3.1-pro-preview")
 else:
     MODEL = os.environ.get("PHANTOM_MODEL", "claude-opus-4-7")
 ANTHROPIC_VERSION = "2023-06-01"

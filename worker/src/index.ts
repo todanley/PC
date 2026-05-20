@@ -41,6 +41,9 @@ interface Price {
     outHighUusdPerM: number;
     tierSplit: number;
 }
+// Gemini 3 / 3.1 Pro Preview share the same rates (verified against the
+// public pricing page, 2026-05). Both ids are mapped so a lookup never falls
+// back unexpectedly; DEFAULT_PRICING also points here.
 const GEMINI_3_PRO: Price = {
     inLowUusdPerM: 2_000_000, outLowUusdPerM: 12_000_000, // <= 200k prompt
     inHighUusdPerM: 4_000_000, outHighUusdPerM: 18_000_000, // > 200k prompt
@@ -48,6 +51,7 @@ const GEMINI_3_PRO: Price = {
 };
 const PRICING: Record<string, Price> = {
     "gemini-3-pro-preview": GEMINI_3_PRO,
+    "gemini-3.1-pro-preview": GEMINI_3_PRO,
 };
 const DEFAULT_PRICING: Price = GEMINI_3_PRO;
 
