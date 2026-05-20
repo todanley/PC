@@ -94,7 +94,7 @@ GEMINI_CLI = os.path.expanduser(
 SYSTEM_PROMPT = """You are an autonomous agent driving a {platform_name} computer. The user gives a one-line task; you complete it by issuing screen actions one at a time.
 
 Each turn you receive a fresh screenshot. {coord_instructions}
-
+{som_instructions}
 GROUND IN THE IMAGE: every turn, look at THIS screenshot. Identify what's actually visible — windows, menus, buttons, text — only from the pixels in front of you. Do NOT assume any element is present because the task name or your prior progress mentions it. If you can't see a navigation control in the current image, do not pretend you can; pick a different action that IS supported by what you see.
 
 POST-ACTION SCREENSHOT: this image was taken AFTER your previous action's effect rendered. If you just clicked a toggle, the new state is already on screen. Trust the screenshot — your prior action is done. Don't repeat it.
@@ -121,6 +121,7 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 {{
   "action": "click" | "double_click" | "type" | "key" | "scroll" | "drag" | "wait" | "done",
+  "mark": <int>,                    // (SoM mode only) id of a magenta-tagged element to act on; preferred over x/y for click/double_click/type when the target is tagged
   "x": <num>, "y": <num>,           // for click / double_click
   "text": "<string>",               // for type
   "key": "<combo>",                 // for key, e.g. "{primary_mod}+space", "enter"
@@ -137,6 +138,18 @@ Action notes:
 - IGNORE unrelated windows: terminals, IDEs, log panels, monitor outputs. Don't wait on their spinners or take cues from their text.
 - For `scroll` to work inside a popup, modal, side panel, or any contained scrollable element: set `scroll_x` / `scroll_y` to a point INSIDE that element. A scroll at default (page center) routes wheel events to the page, which a modal will swallow without scrolling its own contents.
 - `done` when your `progress` shows the task is fully complete. `wait` when content is still loading."""
+
+
+# Injected into the system prompt only when SoM (Set-of-Mark) is active.
+# Tells the model to prefer picking a numbered tag over regressing pixel
+# coordinates — the runner resolves the tag to the element's exact center.
+SOM_INSTRUCTIONS = """
+SET-OF-MARK TAGS: many screenshots have interactive elements outlined with a magenta box and a small numbered badge (e.g. a "3" at the box's top-left corner). These tags are the runner's element index.
+▸ When the element you want to act on is tagged, respond with `"mark": <that number>` INSTEAD of x/y. The runner resolves the tag to that element's exact center pixel — far more reliable than you estimating a coordinate.
+▸ Read the number off the magenta badge that belongs to the SPECIFIC element you mean (the avatar, the follow button, the back arrow). Don't pick the badge of a neighbouring element.
+▸ A `mark` works for `click`, `double_click`, and `type` (for `type`, the runner clicks the tagged field first, then types your `text`).
+▸ Only fall back to raw x/y when the exact control you need has NO tag (e.g. an untagged icon). Never snap to the nearest tag for an untagged target — give x/y instead.
+"""
 
 
 def _platform_strings():
@@ -254,9 +267,16 @@ class VisionClient:
                 "in any picture. The runner converts them to OS click-space "
                 "automatically — you don't need to. Output integers, not fractions."
             )
+        # SoM tag instructions only when Set-of-Mark is active for this run;
+        # otherwise the placeholder collapses to nothing so the prompt is
+        # byte-identical to the pre-SoM build.
+        from . import som
+        self._som_active = som.enabled()
+        som_instructions = SOM_INSTRUCTIONS if self._som_active else ""
         self.system = SYSTEM_PROMPT.format(
             platform_name=plat, width=prompt_w, height=prompt_h,
             primary_mod=primary_mod, coord_instructions=coord_instructions,
+            som_instructions=som_instructions,
         )
         # Append knowledge base — task-specific procedural tips that the
         # model can't be expected to derive from training (e.g. how Douyin's
@@ -271,6 +291,29 @@ class VisionClient:
             pass
         self.history = []  # list of {"role": ..., "content": ...}
         self.last_turn: dict | None = None  # populated each next_action() call
+
+    def _apply_coords(self, action: dict, mark_map: dict | None) -> None:
+        """Resolve the action's target into OS-logical click coords, in-place.
+
+        If the model picked a Set-of-Mark tag and that tag is known, the
+        tag's pre-computed center (image-pixel space) wins — converted to
+        logical px via self.scale, the same factor used for raw pixel coords.
+        This BYPASSES the 0-1000 / fraction heuristics in `_to_logical_xy`,
+        which only apply to model-regressed coordinates. Otherwise fall
+        through to the normal coordinate conversion."""
+        mk = action.get("mark")
+        if mk is not None and mark_map:
+            # Accept "3", "[3]", "mark 3", "element 3", 3, etc.
+            m = re.search(r"\d+", str(mk))
+            key = m.group() if m else None
+            if key and key in mark_map:
+                cx, cy = mark_map[key]
+                action["x"] = max(0, min(self.logical_w - 1, round(cx / self.scale)))
+                action["y"] = max(0, min(self.logical_h - 1, round(cy / self.scale)))
+                return
+            # Tag unknown / stale (layout shifted, tag not in this turn's map):
+            # drop it and fall back to any x/y the model also supplied.
+        self._to_logical_xy(action)
 
     def _to_logical_xy(self, action: dict) -> None:
         """Map the model's reported x/y into OS-logical click coordinates,
@@ -326,7 +369,8 @@ class VisionClient:
             "raise PHANTOM_JPEG_QUALITY threshold or re-introduce downsampling."
         )
 
-    def next_action(self, screenshot_path: str, feedback: str | None = None) -> dict:
+    def next_action(self, screenshot_path: str, feedback: str | None = None,
+                    mark_map: dict | None = None) -> dict:
         b64, media_type = self._encode_image(screenshot_path)
 
         # User turn = optional one-line runner feedback + task reminder +
@@ -340,8 +384,16 @@ class VisionClient:
             else ""
         )
         feedback_line = f"[Runner feedback] {feedback}\n\n" if feedback else ""
+        marks_line = ""
+        if mark_map:
+            marks_line = (
+                f"This screenshot has {len(mark_map)} interactive elements "
+                "outlined in magenta with numbered tags. Prefer "
+                '`"mark": <number>` over x/y for the element you want; use '
+                "x/y only if the exact target has no tag.\n\n"
+            )
         user_text = (
-            f"{feedback_line}Task: {self.task}\n\n{progress_line}"
+            f"{feedback_line}{marks_line}Task: {self.task}\n\n{progress_line}"
             "What's the next single action? Return JSON only — and remember to update `progress`."
         )
         if PROVIDER == "gemini":
@@ -405,7 +457,7 @@ class VisionClient:
             action = _lenient_json_loads(m.group())
             if action is None:
                 raise VisionError(f"invalid JSON: {m.group()[:200]}")
-            self._to_logical_xy(action)
+            self._apply_coords(action, mark_map)
             prog = action.get("progress")
             if isinstance(prog, str) and prog.strip():
                 self._last_progress = prog.strip()
@@ -556,7 +608,7 @@ class VisionClient:
         if action is None:
             raise VisionError(f"invalid JSON: {m.group()[:200]}")
 
-        self._to_logical_xy(action)
+        self._apply_coords(action, mark_map)
 
         # Capture the model's running progress for echo on next turn.
         prog = action.get("progress")

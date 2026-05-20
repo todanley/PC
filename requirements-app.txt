@@ -6,6 +6,12 @@ pyperclip>=1.8.2
 # Used by runner.py for the pixel-diff noop detector.
 numpy>=1.26
 
+# Set-of-Mark (SoM) accuracy mode — opt-in via PHANTOM_SOM=1 (app/som.py).
+# RapidOCR runs PaddleOCR PP-OCR models on ONNX Runtime (CPU) for Chinese +
+# English text detection, and pulls in opencv-python which the icon-region
+# pass also uses. ~25MB of wheels + bundled .onnx models; no PyTorch.
+rapidocr-onnxruntime>=1.3.0
+
 # macOS-only: pyobjc-framework bindings for Quartz / AppKit primitives the
 # phantom.py module uses for low-level CGEvent input and screencapture.
 pyobjc-framework-Quartz>=10.0; sys_platform == "darwin"

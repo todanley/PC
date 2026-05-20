@@ -10,11 +10,28 @@ import os
 import sys
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_all
+
 IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform == "win32"
 ROOT = Path(SPECPATH).resolve()
 
 block_cipher = None
+
+# Set-of-Mark OCR (optional, PHANTOM_SOM=1). RapidOCR keeps its PP-OCR .onnx
+# models + config.yaml as package data, and onnxruntime loads native DLLs via
+# dynamic dispatch the analyser can't trace — so collect_all() for both,
+# pulling datas + binaries + hiddenimports. Guarded so a checkout without the
+# OCR deps installed still builds (SoM just stays unavailable at runtime).
+SOM_DATAS, SOM_BINARIES, SOM_HIDDEN = [], [], []
+for _pkg in ("rapidocr_onnxruntime", "onnxruntime"):
+    try:
+        _d, _b, _h = collect_all(_pkg)
+        SOM_DATAS += _d
+        SOM_BINARIES += _b
+        SOM_HIDDEN += _h
+    except Exception:
+        pass
 
 # Platform-specific hidden imports. Quartz/AppKit only exist on macOS; the
 # Windows side relies on pyautogui + mss + pywin32, which PyInstaller's
@@ -28,18 +45,18 @@ PLAT_HIDDEN = ['Quartz', 'AppKit', 'objc'] if IS_MAC else [
 a = Analysis(
     ['phantom_click_main.py'],
     pathex=[str(ROOT)],
-    binaries=[],
+    binaries=[] + SOM_BINARIES,
     # knowledge.md is read at runtime by VisionClient — bundle it next to the
     # `app` package inside the .app's Frameworks dir.
     datas=[
         ('app/knowledge.md', 'app'),
-    ],
+    ] + SOM_DATAS,
     hiddenimports=[
         # PySide6 sub-modules PyInstaller's analyser sometimes misses.
         'PySide6.QtCore',
         'PySide6.QtGui',
         'PySide6.QtWidgets',
-    ] + PLAT_HIDDEN,
+    ] + PLAT_HIDDEN + SOM_HIDDEN,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -50,10 +67,13 @@ a = Analysis(
         'pytest', 'unittest',
         # Network libs only the bridge server uses.
         'fastapi', 'uvicorn', 'httpx',
-        # Transitively pulled in by something; our Python install only has
-        # an x86_64 wheel of _yaml.so which breaks arm64 packaging.
-        'yaml', '_yaml',
-    ],
+    ] + (
+        # macOS only: our Python install ships an x86_64-only _yaml.so that
+        # breaks arm64 packaging. On Windows we KEEP yaml — RapidOCR (SoM
+        # OCR) imports it to read its model config.yaml; excluding it makes
+        # the OCR engine fail to load in the bundle.
+        ['yaml', '_yaml'] if IS_MAC else []
+    ),
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,

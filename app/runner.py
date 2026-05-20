@@ -11,6 +11,7 @@ from PIL import Image, ImageChops
 from PySide6.QtCore import QThread, Signal
 
 from . import humanize
+from . import som
 from .platform_layer import Input, Screen
 from .vision import VisionClient, VisionError
 
@@ -312,6 +313,15 @@ class TaskRunner(QThread):
         self._scroll_default_x = round(sw * 0.55)
         self._scroll_default_y = round(sh * 0.55)
 
+        # Set-of-Mark: when enabled (PHANTOM_SOM=1), each turn's screenshot is
+        # annotated with numbered tags on detected interactive elements and
+        # the model picks a tag instead of regressing a pixel coordinate. The
+        # engine loads its OCR model lazily on first use; if that fails it
+        # returns empty maps and we transparently fall back to plain
+        # coordinate prompting. Constructing the engine is cheap (no model
+        # load yet) so it's safe to do unconditionally behind the flag.
+        som_engine = som.get_engine() if som.enabled() else None
+
         # Browser prelude: maximize the focused window + bump zoom so the
         # model has bigger targets to localize. Fires once per task before
         # any vision call. Disabled via PHANTOM_BROWSER_PRELUDE=0; zoom
@@ -399,9 +409,31 @@ class TaskRunner(QThread):
                 self.failed.emit(f"screenshot failed: {e}")
                 return
 
+            # Set-of-Mark: annotate a COPY of the screenshot with numbered
+            # element tags and send that to the model. The unmarked `shot` is
+            # kept as the before-image for click/scroll noop verification so
+            # the magenta overlays never pollute the pixel diff. mark_map is
+            # in image-pixel space (== model coord space); next_action()
+            # resolves a returned tag to the element's exact center. On any
+            # failure mark_map is empty and we send the original screenshot.
+            shot_for_model = shot
+            mark_map = None
+            if som_engine is not None:
+                marked = os.path.join(self._tmpdir, f"mark_{step:02d}.png")
+                try:
+                    mark_map = som_engine.mark_screenshot(shot, marked)
+                except Exception:
+                    mark_map = None
+                if mark_map:
+                    shot_for_model = marked
+                    self.step_started.emit(
+                        step, f"Step {step}: tagged {len(mark_map)} elements")
+
             self.step_started.emit(step, f"Step {step}: asking Claude…")
             try:
-                action = client.next_action(shot, feedback=pending_feedback)
+                action = client.next_action(
+                    shot_for_model, feedback=pending_feedback,
+                    mark_map=mark_map)
             except VisionError as e:
                 self.failed.emit(f"vision call failed: {e}")
                 return
