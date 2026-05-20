@@ -555,13 +555,30 @@ class TaskRunner(QThread):
                     )
                     return
                 px, py = action.get("x"), action.get("y")
-                pending_feedback = (
-                    f"your previous click at ({px},{py}) didn't change the screen "
-                    "(likely missed the target or the element wasn't actually clickable). "
-                    "Re-localize from the current screenshot — the layout may have shifted "
-                    "since your last attempt — and pick a DIFFERENT coordinate or element. "
-                    "Don't repeat the same coordinate."
-                )
+                mk = action.get("mark")
+                if mk is not None:
+                    # SoM mode: the model is choosing tags, not coordinates, so
+                    # telling it "don't reuse (x,y)" is meaningless — it'll just
+                    # re-pick the same tag (this is exactly how it got stuck in
+                    # field testing). Name the dead tag and forbid it.
+                    pending_feedback = (
+                        f"Clicking mark [{mk}] changed nothing — that tag is NOT "
+                        "the control you intended (it may be a label, a decorative "
+                        "box, or a non-clickable region). Do NOT pick mark "
+                        f"[{mk}] again. Look at the screenshot and choose a "
+                        "DIFFERENT tag — the real target (e.g. the 关注/following "
+                        "COUNT in a profile header) may be a small number you "
+                        "have to read carefully. If no tag sits on it, give x/y "
+                        "on that exact spot instead."
+                    )
+                else:
+                    pending_feedback = (
+                        f"your previous click at ({px},{py}) didn't change the screen "
+                        "(likely missed the target or the element wasn't actually clickable). "
+                        "Re-localize from the current screenshot — the layout may have shifted "
+                        "since your last attempt — and pick a DIFFERENT coordinate or element. "
+                        "Don't repeat the same coordinate."
+                    )
                 time.sleep(_POST_ACTION_DELAY_S)
                 continue
             # Click landed (or non-click action) — reset the stuck counter.
@@ -680,8 +697,14 @@ class TaskRunner(QThread):
                             last_click_was_noop = False
                         else:
                             last_click_was_noop = True
+                            mk = action.get("mark")
+                            mark_note = (
+                                f"(You selected mark [{mk}]; it is NOT on a working "
+                                f"control — do NOT pick mark [{mk}] again.) "
+                                if mk is not None else ""
+                            )
                             pending_feedback = (
-                                f"Your click at ({cx},{cy}) produced no visible "
+                                f"{mark_note}Your click at ({cx},{cy}) produced no visible "
                                 "change in the area around that point, AND the "
                                 "runner's auto-retry at 8 nearby offsets "
                                 "(±14-18 px) all also failed. Two cases:\n"
