@@ -7,6 +7,8 @@ venv/
 .env
 .env.local
 phantom_run_*/
+# Self-review harness run artifacts (screenshots, marked frames, dumps).
+_runs/
 
 # Claude Code session metadata
 .claude/

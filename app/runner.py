@@ -199,7 +199,16 @@ class TaskRunner(QThread):
         super().__init__(parent)
         self.task = task
         self._cancel = False
-        self._tmpdir = tempfile.mkdtemp(prefix="phantom_run_")
+        # PHANTOM_RUN_DIR pins the per-turn artifact directory (screenshots,
+        # marked frames, turn dump) to a known, persistent path so a test
+        # harness can review what happened. Unset → a throwaway temp dir, as
+        # before.
+        run_dir = os.environ.get("PHANTOM_RUN_DIR", "").strip()
+        if run_dir:
+            os.makedirs(run_dir, exist_ok=True)
+            self._tmpdir = run_dir
+        else:
+            self._tmpdir = tempfile.mkdtemp(prefix="phantom_run_")
         # Default scroll-cursor anchor: 55%/55% of logical screen so the wheel
         # event lands inside a modal-sized area. Filled at run() start once
         # we know screen size.
@@ -366,8 +375,19 @@ class TaskRunner(QThread):
         # in the same region, so the modal actually scrolls instead of
         # the page underneath.
         last_click_xy: tuple[float, float] | None = None
+        # PHANTOM_MAX_STEPS bounds a run for testing so it can't loop forever
+        # (or rack up irreversible actions) before a human reviews it. 0/unset
+        # → no cap, normal production behavior.
+        try:
+            max_steps = int(os.environ.get("PHANTOM_MAX_STEPS", "0") or 0)
+        except ValueError:
+            max_steps = 0
         while True:
             step += 1
+            if max_steps and step > max_steps:
+                self.failed.emit(
+                    f"reached PHANTOM_MAX_STEPS={max_steps} — stopping (test cap).")
+                return
             if self._cancel:
                 self.failed.emit("cancelled")
                 return
