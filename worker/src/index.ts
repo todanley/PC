@@ -187,18 +187,28 @@ export default {
         // --- 4. Meter real usage and deduct (only on a 2xx body with usage) ---
         let promptTokens = 0;
         let completionTokens = 0;
+        let billedOutput = 0;
+        let totalTokens = 0;
         let costUusd = 0;
         let remainingUusd = balanceBefore;
         if (upstreamResp.ok) {
             try {
                 const j = JSON.parse(new TextDecoder().decode(respBody)) as {
-                    usage?: { prompt_tokens?: number; completion_tokens?: number };
+                    usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
                 };
                 const u = j.usage;
                 if (u && typeof u.prompt_tokens === "number" && typeof u.completion_tokens === "number") {
                     promptTokens = u.prompt_tokens;
                     completionTokens = u.completion_tokens;
-                    costUusd = costMicroUsd(model ?? "", promptTokens, completionTokens);
+                    totalTokens = typeof u.total_tokens === "number" ? u.total_tokens : 0;
+                    // Gemini bills "thinking"/reasoning tokens at the OUTPUT rate
+                    // but leaves them OUT of completion_tokens — they only show
+                    // up in total_tokens. Charging just completion_tokens would
+                    // give reasoning away free (turns the markup negative on
+                    // thinking-heavy calls). Bill every non-prompt token at the
+                    // output rate.
+                    billedOutput = Math.max(completionTokens, totalTokens - promptTokens);
+                    costUusd = costMicroUsd(model ?? "", promptTokens, billedOutput);
                 }
             } catch {
                 /* non-JSON / streamed body: nothing to meter, deduct nothing */
@@ -236,6 +246,8 @@ export default {
             resp_bytes: respBody.byteLength,
             prompt_tokens: promptTokens,
             completion_tokens: completionTokens,
+            total_tokens: totalTokens,
+            billed_output: billedOutput,
             cost_uusd: costUusd,
             remaining_uusd: remainingUusd,
         });
