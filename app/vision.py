@@ -127,7 +127,7 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
   "text": "<string>",               // for type
   "key": "<combo>",                 // for key, e.g. "{primary_mod}+space", "enter"
   "direction": "up" | "down",       // for scroll
-  "scroll_x": <num>, "scroll_y": <num>, // optional, for scroll: point INSIDE the scrollable region (e.g. inside an open modal/popover/sidebar). Defaults to screen center, which only scrolls the page itself — wheel events at that point won't reach a modal's contents. Use the same coord convention as click x/y.
+  "scroll_x": <num>, "scroll_y": <num>, // OPTIONAL and usually OMIT. Leave them out for normal page scrolls AND for centered modals/popovers — the runner auto-targets a sensible point near screen-center that lands inside a centered overlay. Only set them when the scrollable area is clearly OFF-center (e.g. a narrow left sidebar or a right-docked panel), and then use the SAME coordinate convention as click x/y.
   "x1": <num>, "y1": <num>, "x2": <num>, "y2": <num>, // for drag: press at (x1,y1), drag to (x2,y2), release. Use for slider CAPTCHAs, range-sliders, drag-and-drop. Same coord convention as click x/y.
   "reasoning": "<one short sentence on why this single action>",
   "progress": "<running checklist of what's been completed and what's left>"
@@ -137,7 +137,7 @@ Action notes:
 - ONE action per turn. The next turn shows the result.
 - To open an app: if its icon is visible (taskbar, dock, desktop, Start/Launchpad), CLICK it — that's the mouse-first path. Only when no icon is reachable, fall back to keyboard launch (macOS: `{primary_mod}+space`, `type` the app's native name — in its own script for non-Latin names — then `key: enter`).
 - IGNORE unrelated windows: terminals, IDEs, log panels, monitor outputs. Don't wait on their spinners or take cues from their text.
-- For `scroll` to work inside a popup, modal, side panel, or any contained scrollable element: set `scroll_x` / `scroll_y` to a point INSIDE that element. A scroll at default (page center) routes wheel events to the page, which a modal will swallow without scrolling its own contents.
+- To scroll: emit `scroll` with just a `direction` and normally NO `scroll_x`/`scroll_y`. The runner scrolls at a point near screen-center, which is inside a centered modal/popover as well as the page — so omitting the coords is the reliable default. Set `scroll_x`/`scroll_y` ONLY when the scrollable region is clearly OFF-center (a left sidebar, a right-docked panel), and express them in the SAME convention as click x/y (do NOT switch to raw pixels). Wrong-convention scroll coords land off-screen and the scroll does nothing.
 - `done` when your `progress` shows the task is fully complete. `wait` when content is still loading."""
 
 
