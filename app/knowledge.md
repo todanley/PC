@@ -1,9 +1,19 @@
 # Phantom-Click knowledge base
 
-Generic, cross-app procedural tips appended to the system prompt every turn.
-Phantom-Click drives ARBITRARY apps via vision; do not add app-specific
-flows here — they bias the model and hurt generality. Keep entries to
-patterns that apply broadly across desktop apps.
+Procedural tips appended to the system prompt every turn. Two kinds of
+entries:
+
+- **General patterns** — apply broadly across apps (launching, navigating
+  back, list traversal, toggle buttons). Keep these app-agnostic.
+- **App-specific flows** — concrete navigation/known quirks for a particular
+  site or app (e.g. Douyin). These are allowed and encouraged: they save the
+  model from rediscovering a multi-step flow every run and from re-learning a
+  quirk that already cost a debugging session. Put them under "## App: <name>"
+  headings so they only inform the model when that app is in play.
+
+When you (or an operator) discover something non-obvious about how a specific
+app behaves — a navigation path, a confirm-dialog, a two-step button — record
+it here under the right "## App:" heading so the next run starts knowing it.
 
 ## Launching an app on macOS
 
@@ -120,3 +130,41 @@ the avatar's bottom edge) signals the current follow relationship:
   • Avatar with NO "+" badge → you ALREADY follow this creator. There is
     no separate "已关注" label here — the absence of the "+" IS the
     indicator. Do not click the avatar expecting it to follow.
+
+## Toggle actions may take more than one click — always verify state
+
+A button that toggles state (follow / like / save / subscribe / mute) does
+NOT always flip on the first click. Common reasons: the first click only
+focuses/hovers the control, or the app pops a confirmation ("确定取消关注？"
+/ "Unfollow?") that needs a second click to confirm. So:
+
+- After clicking a toggle, READ THE NEXT SCREENSHOT and confirm the button's
+  label/colour actually changed to the new state before you count it done.
+- If it still shows the OLD state, click the SAME button once more (or click
+  the confirm button if a dialog appeared).
+- Once it shows the NEW state, STOP — clicking again just undoes it. Never
+  click a control that is already in the state you want.
+
+## App: Douyin (douyin.com) — managing who you follow / unfollowing
+
+To see or manage the accounts you follow (your "Following" roster), do NOT
+use the 关注 item in the left sidebar — that opens the following FEED
+(videos/lives), not the list of accounts. Instead:
+
+1. Click **我的** (My) in the left sidebar to open your own profile.
+2. In the profile header, click the **关注** count NUMBER (e.g. the "69" next
+   to 关注). This opens the **Following roster modal** — a scrollable popup
+   listing each followed account.
+3. Each row has: avatar (left), username + bio, and a button on the right:
+   - **已关注** (grey) = you currently follow them.
+   - **相互关注** (grey) = mutual follow.
+   - **关注** (red) = you are NOT following (red means "tap to follow").
+4. To **unfollow** an account, click its 已关注 / 相互关注 button. It may take
+   TWO clicks (the first highlights it red, the second confirms); when it
+   turns into a red **关注** button the unfollow is done — move on. NEVER
+   click a red 关注 button, that re-follows them.
+5. To see more accounts, scroll DOWN over the centre of the modal (the
+   account rows). You usually don't need to set scroll_x/scroll_y — the
+   runner scrolls a sensible point inside a centred modal by default.
+6. Accounts you already unfollowed stay in the list showing red 关注; skip
+   them on later passes.
