@@ -382,6 +382,12 @@ class TaskRunner(QThread):
             max_steps = int(os.environ.get("PHANTOM_MAX_STEPS", "0") or 0)
         except ValueError:
             max_steps = 0
+        # The same-bucket repeat-click suppressor protects toggle state, but on
+        # a list task (e.g. unfollowing down a roster) consecutive legitimate
+        # clicks can land in the same bucket after the list re-renders, and the
+        # suppressor would silently drop them. PHANTOM_SUPPRESS_REPEAT_CLICKS=0
+        # disables it for those runs. Default on (production behavior).
+        suppress_repeats = os.environ.get("PHANTOM_SUPPRESS_REPEAT_CLICKS", "1") != "0"
         while True:
             step += 1
             if max_steps and step > max_steps:
@@ -537,7 +543,7 @@ class TaskRunner(QThread):
             # detected no-op (post-action verification flagged it), the
             # current attempt is a RETRY of a missed click, not a toggle
             # undo, so we let it through.
-            if (new_bucket is not None and new_bucket == last_bucket
+            if (suppress_repeats and new_bucket is not None and new_bucket == last_bucket
                     and not last_click_was_noop):
                 self.step_done.emit(step, {
                     "action": "suppressed_repeat_click",
