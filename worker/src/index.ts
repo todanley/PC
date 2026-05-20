@@ -41,14 +41,15 @@ interface Price {
     outHighUusdPerM: number;
     tierSplit: number;
 }
-const PRICING: Record<string, Price> = {
-    "gemini-3-pro-preview": {
-        inLowUusdPerM: 2_000_000, outLowUusdPerM: 12_000_000, // <= 200k prompt
-        inHighUusdPerM: 4_000_000, outHighUusdPerM: 18_000_000, // > 200k prompt
-        tierSplit: 200_000,
-    },
+const GEMINI_3_PRO: Price = {
+    inLowUusdPerM: 2_000_000, outLowUusdPerM: 12_000_000, // <= 200k prompt
+    inHighUusdPerM: 4_000_000, outHighUusdPerM: 18_000_000, // > 200k prompt
+    tierSplit: 200_000,
 };
-const DEFAULT_PRICING: Price = PRICING["gemini-3-pro-preview"];
+const PRICING: Record<string, Price> = {
+    "gemini-3-pro-preview": GEMINI_3_PRO,
+};
+const DEFAULT_PRICING: Price = GEMINI_3_PRO;
 
 // Markup in basis points (/10000). 20000 = 2.0x = ~50% operator margin: a $5
 // token covers ~$2.50 of real Gemini. Fold AUD↔USD into this too if selling in
