@@ -896,14 +896,14 @@ class TaskRunner(QThread):
                     sx, sy = scroll_fallback
                 else:
                     sx, sy = self._scroll_default_x, self._scroll_default_y
-            # Wheel force is tunable: short modal lists (e.g. Douyin's follow
-            # roster) need a firmer push than a 3-tick nudge to overcome
-            # per-row snapping and actually advance. PHANTOM_SCROLL_CLICKS
-            # overrides the default tick count.
+            # Number of wheel EVENTS per scroll action; each moves
+            # PHANTOM_SCROLL_STEP real detents (see Input.scroll). Default 1 —
+            # one detent ≈ half a modal viewport, enough to progress without
+            # skipping rows. PHANTOM_SCROLL_CLICKS tunes it.
             try:
-                clicks = int(os.environ.get("PHANTOM_SCROLL_CLICKS", "3") or 3)
+                clicks = int(os.environ.get("PHANTOM_SCROLL_CLICKS", "1") or 1)
             except ValueError:
-                clicks = 3
+                clicks = 1
             inp.scroll(action.get("direction", "down"), clicks=clicks, x=sx, y=sy)
         elif act in ("done", "wait"):
             return

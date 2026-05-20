@@ -304,36 +304,36 @@ class Input:
         except Exception:
             return False
 
-    def scroll(self, direction: str = "down", clicks: int = 3,
+    def scroll(self, direction: str = "down", clicks: int = 1,
                x: float | None = None, y: float | None = None):
-        """Variable-speed scroll: dispatch wheel ticks one at a time with
-        a paced inter-tick delay so the resulting `wheel` event stream in the
-        browser has natural inertia instead of a single bulk burst.
+        """Scroll the wheel by `clicks` events of `step` real detents each.
 
-        The inter-tick delay has a hard FLOOR (independent of humanization):
-        many web lists — notably Douyin's follow-roster modal — debounce a
-        rapid wheel burst into a single tiny scroll, so firing every tick
-        instantly (as happens with PHANTOM_HUMANIZE=0) barely moves the list.
-        Pacing each notch a few tens of ms apart makes them register."""
+        WHEEL_DELTA note: pyautogui.scroll(n) passes `n` straight to the Win32
+        `mouse_event(MOUSEEVENTF_WHEEL, dwData=n)` as the RAW wheel delta — it
+        does NOT scale by WHEEL_DELTA (120 = one physical detent). So
+        pyautogui.scroll(1) injects 1/120th of a notch — almost no movement,
+        which is why list modals appeared unscrollable. We multiply by 120 so
+        `step` means whole detents, matching a real wheel and behaving
+        predictably across pages and modals.
+
+        Calibration: on Douyin's follow-roster modal one detent ≈ 2-3 rows, so
+        the default (1 detent/event, 1 event) advances ~half a viewport — far
+        enough to make progress, with enough overlap that no list row is
+        skipped. PHANTOM_SCROLL_STEP (detents/event) and `clicks` tune it."""
         if x is not None and y is not None:
             _humanized_move(x, y)
         sign = -1 if direction == "down" else 1
-        # Per-event wheel magnitude. A single 1-notch event barely moves some
-        # web lists (Douyin's follow-roster modal advanced ~1px/notch in field
-        # probes), while a ~10-notch event moves a couple of rows — and the
-        # browser clamps a single event's effect, so going much larger doesn't
-        # overshoot. PHANTOM_SCROLL_STEP tunes it; `clicks` is how many such
-        # events fire, paced so each registers.
         try:
-            step = int(os.environ.get("PHANTOM_SCROLL_STEP", "10") or 10)
+            step = int(os.environ.get("PHANTOM_SCROLL_STEP", "1") or 1)
         except ValueError:
-            step = 10
+            step = 1
         step = max(1, step)
+        WHEEL_DELTA = 120  # one physical wheel detent
         for i in range(max(1, clicks)):
-            pyautogui.scroll(sign * step)
+            pyautogui.scroll(sign * step * WHEEL_DELTA)
             if i < clicks - 1:
-                # Floor of 50 ms so debouncing lists still advance; humanize
-                # adds extra jitter on top when enabled.
+                # Pace multi-event scrolls a little so each registers and the
+                # stream looks like real wheel inertia rather than one burst.
                 time.sleep(max(0.05, humanize.scroll_step_delay_s()))
 
 
