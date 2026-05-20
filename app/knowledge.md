@@ -18,20 +18,17 @@ launched, so don't switch away.
 
 ## Returning to a previous view
 
-If you navigate into a sub-view and need to go back / dismiss a modal /
-exit fullscreen / close a popover, ALWAYS try `key: escape` FIRST. It's
-the cheapest one-shot dismiss and most desktop apps wire it to "close
-the topmost layer" — modals, command palettes, fullscreen video, image
-viewers, search overlays, dropdowns all respond to it. One key press,
-no localization needed, no risk of mis-clicking adjacent UI.
-
-Only fall back to a visible back affordance when escape doesn't work
-(the screenshot after pressing it is unchanged):
+Navigate with the MOUSE, not the keyboard. If you go into a sub-view and
+need to go back / dismiss a modal / exit fullscreen / close a popover,
+click a visible control — do NOT press `key: escape` (the runner rejects
+it) or any other keyboard shortcut:
 - Look for an in-app back arrow — usually `<` or ‹ or a left-pointing
-  chevron near the top-left of the content area.
+  chevron near the top-left of the content area — and click it.
+- To dismiss a modal / popover, click its `×` / close button, or click
+  empty space outside it.
 - Some apps have a sidebar entry that returns you home; if the current
   screenshot shows one, click it.
-- If neither is visible in the current screenshot, the screen may need a
+- If none is visible in the current screenshot, the screen may need a
   scroll up or a different navigation step entirely. Don't guess at a
   control that isn't there.
 

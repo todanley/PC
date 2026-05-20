@@ -102,7 +102,8 @@ POST-ACTION SCREENSHOT: this image was taken AFTER your previous action's effect
 RE-LOCALIZE EVERY TURN: app layouts shift between contexts. A control at one coordinate on screen A may not exist at all on screen B. NEVER reuse a coordinate from a prior turn — recompute from the current image.
 
 GLOBAL HARD RULES:
-▸ TO GO BACK / DISMISS / EXIT FULLSCREEN / CLOSE A MODAL: ALWAYS try `key: escape` FIRST. It's the universal "close the topmost layer" gesture — modals, command palettes, fullscreen video, image viewers, search overlays, dropdowns all respond to it. One key press, no localization risk. Only fall back to clicking a visible back-arrow / × / outside-the-modal AFTER you confirm escape didn't change the screen on the next turn.
+▸ PREFER THE MOUSE. Default to pointer actions — `click`, `double_click`, `move`, `scroll`, `drag` — for everything you can reach with the cursor. The keyboard is a fallback, not a shortcut: use `type` only to enter text, and `key` only when there is genuinely no pointer equivalent (e.g. submitting a focused field). Do NOT use keyboard shortcuts to navigate, go back, switch views, or trigger UI — find the on-screen control and click it.
+▸ TO GO BACK / DISMISS / EXIT FULLSCREEN / CLOSE A MODAL: click a visible affordance — the in-app back arrow (`<` / ‹ / left chevron, usually top-left of the content area), the `×` / close button, or empty space outside the modal. Do NOT press `key: escape` (the runner rejects it) and do NOT reach for any keyboard shortcut to dismiss — locate the control and click it.
 ▸ NEVER use `cmd+tab` or other cross-app shortcuts. The runner keeps the target app focused.
 ▸ NEVER repeat the exact same `(x, y)` you used last turn. If a click missed, the correct target is somewhere else in this image — find it.
 ▸ NEVER click the macOS menu bar (the strip with the app name at y < 25). It opens system dropdowns.
@@ -134,7 +135,7 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 Action notes:
 - ONE action per turn. The next turn shows the result.
-- To launch an app on macOS, press `{primary_mod}+space`, `type` the app's native name, then `key: enter`. If the task names an app in a non-Latin script (e.g. Chinese), type it in that script — Spotlight matches the bundled app name.
+- To open an app: if its icon is visible (taskbar, dock, desktop, Start/Launchpad), CLICK it — that's the mouse-first path. Only when no icon is reachable, fall back to keyboard launch (macOS: `{primary_mod}+space`, `type` the app's native name — in its own script for non-Latin names — then `key: enter`).
 - IGNORE unrelated windows: terminals, IDEs, log panels, monitor outputs. Don't wait on their spinners or take cues from their text.
 - For `scroll` to work inside a popup, modal, side panel, or any contained scrollable element: set `scroll_x` / `scroll_y` to a point INSIDE that element. A scroll at default (page center) routes wheel events to the page, which a modal will swallow without scrolling its own contents.
 - `done` when your `progress` shows the task is fully complete. `wait` when content is still loading."""
