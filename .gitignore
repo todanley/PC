@@ -17,3 +17,6 @@ _runs/
 build/
 dist/
 *.app/
+
+# Wrangler local state/cache (created when running the Worker locally)
+.wrangler/
