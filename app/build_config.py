@@ -1,16 +1,18 @@
 """Build-time configuration baked into the shipped binary.
 
-Two literals get rewritten by `build-mac.sh` before PyInstaller runs:
-  • BRIDGE_URL    — the public URL of the operator's bridge tunnel
-  • BRIDGE_TOKEN  — the shared bearer token CN clients use to call the bridge
+Only BRIDGE_URL is baked into shipped builds (rewritten by the build scripts
+before PyInstaller runs). The bearer token is NO LONGER baked — each user pastes
+their own prepaid wallet token into the app at runtime (see app/wallet.py); the
+Worker meters that token's dollar balance. BRIDGE_TOKEN remains here only as an
+optional dev override (PHANTOM_BRIDGE_TOKEN) so operator-side `python3 -m
+app.main` runs can skip the in-app token prompt.
 
-For operator-side dev (running `python3 -m app.main` directly), env vars
-PHANTOM_BRIDGE_URL / PHANTOM_BRIDGE_TOKEN override these placeholders so you
-can iterate without rebuilding the bundle.
+For operator-side dev, env vars PHANTOM_BRIDGE_URL / PHANTOM_BRIDGE_TOKEN
+override the placeholders so you can iterate without rebuilding the bundle.
 
-If neither the baked literal nor the env var is set, vision.py falls through
-to the old PHANTOM_PROVIDER / GEMINI_API_KEY env-var path so existing
-direct-Gemini workflows keep working.
+If BRIDGE_URL is not set (neither baked nor env), vision.py falls through to the
+old PHANTOM_PROVIDER / GEMINI_API_KEY env-var path so existing direct-Gemini
+workflows keep working.
 """
 import os
 
@@ -32,9 +34,12 @@ def _resolve(env_var: str, baked: str) -> str | None:
 
 
 BRIDGE_URL = _resolve("PHANTOM_BRIDGE_URL", _BAKED_BRIDGE_URL)
+# Optional dev-only bearer override; production builds leave this None and the
+# user-entered wallet token (app/wallet.py) is used instead.
 BRIDGE_TOKEN = _resolve("PHANTOM_BRIDGE_TOKEN", _BAKED_BRIDGE_TOKEN)
 
-# True iff this build has both pieces wired up — i.e. it's a CN-ship build.
-# Operator-side dev runs (env vars empty + placeholders unreplaced) leave
-# this False and vision.py falls back to the standard provider routing.
-IS_CN_BUILD = bool(BRIDGE_URL and BRIDGE_TOKEN)
+# True iff this build routes through the operator's bridge — i.e. a CN-ship
+# build (BRIDGE_URL baked). The bearer is supplied at runtime by the user, so
+# only the URL gates this. Operator-side dev runs without BRIDGE_URL leave this
+# False and vision.py falls back to the standard provider routing.
+IS_CN_BUILD = bool(BRIDGE_URL)

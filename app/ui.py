@@ -6,11 +6,13 @@ import threading
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QMainWindow, QPlainTextEdit, QPushButton, QScrollArea, QSplitter,
-    QVBoxLayout, QWidget,
+    QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget,
+    QListWidgetItem, QMainWindow, QPlainTextEdit, QPushButton, QScrollArea,
+    QSplitter, QVBoxLayout, QWidget,
 )
 
+from . import wallet
+from .build_config import IS_CN_BUILD
 from .platform_layer import Input
 from .runner import TaskRunner
 
@@ -215,6 +217,17 @@ class MainWindow(QMainWindow):
 
         layout.addSpacing(6)
 
+        # Wallet balance line (CN-ship builds only). Shows the user their own
+        # remaining quota in dollars — never Gemini tokens. Updated from the
+        # bridge's X-Quota-Remaining-Usd header after each turn.
+        self._last_remaining: float | None = None
+        if IS_CN_BUILD:
+            self.balance_label = QLabel(self._balance_text())
+            self.balance_label.setStyleSheet("color: #8b9099; font-size: 20px;")
+            self.balance_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            layout.addWidget(self.balance_label)
+            layout.addSpacing(6)
+
         # Task input
         prompt_label = QLabel("想让我做什么？")
         layout.addWidget(prompt_label)
@@ -312,6 +325,35 @@ class MainWindow(QMainWindow):
             if w is not None:
                 w.deleteLater()
 
+    # ── Wallet token / balance ──────────────────────────────────────────
+    def _balance_text(self) -> str:
+        if not wallet.get_token():
+            return "令牌：未设置（运行时输入）"
+        if self._last_remaining is None:
+            return "令牌：已设置"
+        return f"剩余额度：${self._last_remaining:.2f}"
+
+    def _refresh_balance_label(self):
+        if IS_CN_BUILD and hasattr(self, "balance_label"):
+            self.balance_label.setText(self._balance_text())
+
+    def _prompt_token(self, reason: str = "") -> bool:
+        """Modal prompt for the user's wallet token. Returns True if a token
+        was entered and stored."""
+        prefix = (reason + "\n\n") if reason else ""
+        tok, ok = QInputDialog.getText(
+            self, "输入令牌", prefix + "请输入管理员给你的令牌（token）：")
+        if ok and tok.strip():
+            wallet.set_token(tok.strip())
+            self._last_remaining = None
+            self._refresh_balance_label()
+            return True
+        return False
+
+    def _on_quota_updated(self, remaining: float):
+        self._last_remaining = remaining
+        self._refresh_balance_label()
+
     def _on_run(self):
         task = self.task_input.toPlainText().strip()
         if not task:
@@ -319,6 +361,12 @@ class MainWindow(QMainWindow):
             return
         if self._runner and self._runner.isRunning():
             return
+
+        # CN-ship builds need a wallet token before they can call the bridge.
+        if IS_CN_BUILD and not wallet.get_token():
+            if not self._prompt_token("尚未设置令牌。"):
+                self._append_log("[!] 未输入令牌，无法运行。")
+                return
 
         self.log.clear()
         self._clear_conversation()
@@ -333,6 +381,7 @@ class MainWindow(QMainWindow):
         self._runner.turn_logged.connect(self._on_turn_logged)
         self._runner.finished_ok.connect(self._on_finished_ok)
         self._runner.failed.connect(self._on_failed)
+        self._runner.quota_updated.connect(self._on_quota_updated)
         self._runner.start()
 
     def _on_stop(self):
@@ -441,6 +490,16 @@ class MainWindow(QMainWindow):
         self._reset_buttons()
 
     def _on_failed(self, msg: str):
+        # Wallet/quota messages: show verbatim and prompt for a (new) token so
+        # the user can top up and rerun without restarting the app.
+        if msg.startswith(("额度", "请输入", "令牌")):
+            if msg.startswith("额度"):
+                self._last_remaining = 0.0
+                self._refresh_balance_label()
+            self._append_log(f"✗  {msg}")
+            self._reset_buttons()
+            self._prompt_token(msg)
+            return
         # Strip internal run-dir / video paths from failure messages so the
         # demo UI stays clean. Keep the human-readable head before the colon.
         clean = msg

@@ -24,14 +24,17 @@ cd "$(dirname "$0")"
 
 # --- 1. Sanity checks -------------------------------------------------------
 
-if [[ -z "${PHANTOM_BRIDGE_URL:-}" || -z "${PHANTOM_BRIDGE_TOKEN:-}" ]]; then
+# Only the bridge URL is baked now; the bearer token is NOT baked — each user
+# pastes their own prepaid wallet token into the app at runtime.
+if [[ -z "${PHANTOM_BRIDGE_URL:-}" ]]; then
     cat >&2 <<EOF
-error: PHANTOM_BRIDGE_URL and PHANTOM_BRIDGE_TOKEN must be set.
+error: PHANTOM_BRIDGE_URL must be set.
 
 Example:
   export PHANTOM_BRIDGE_URL=https://bridge.yourdomain.com
-  export PHANTOM_BRIDGE_TOKEN=\$(python3 -m bridge.issue_token public-pool --max-per-day 5000)
   ./build-mac.sh
+
+(Issue user wallet tokens separately with worker/issue-token.sh.)
 EOF
     exit 1
 fi
@@ -70,20 +73,20 @@ trap restore_config EXIT INT TERM
 # URLs contain slashes; and we escape any | that would somehow appear in
 # the token (unlikely — secrets.token_urlsafe yields [A-Za-z0-9_-]).
 URL_ESC=$(printf '%s\n' "$PHANTOM_BRIDGE_URL" | sed -e 's/[\&|]/\\&/g')
-TOK_ESC=$(printf '%s\n' "$PHANTOM_BRIDGE_TOKEN" | sed -e 's/[\&|]/\\&/g')
+# Token left as the @@BRIDGE_TOKEN@@ placeholder on purpose → build_config
+# resolves it to None; users supply their own wallet token.
 sed -i.bak \
     -e "s|@@BRIDGE_URL@@|$URL_ESC|g" \
-    -e "s|@@BRIDGE_TOKEN@@|$TOK_ESC|g" \
     "$CFG"
 rm -f "${CFG}.bak"
 
 # Verify the substitution actually happened (sed silently no-ops on missed
 # patterns and we'd ship a broken bundle otherwise).
-if grep -q '@@BRIDGE_URL@@\|@@BRIDGE_TOKEN@@' "$CFG"; then
-    echo "error: placeholders still present in $CFG after substitution" >&2
+if grep -q '@@BRIDGE_URL@@' "$CFG"; then
+    echo "error: BRIDGE_URL placeholder still present in $CFG after substitution" >&2
     exit 1
 fi
-echo "→ build_config baked: BRIDGE_URL=$PHANTOM_BRIDGE_URL (token hidden)"
+echo "→ build_config baked: BRIDGE_URL=$PHANTOM_BRIDGE_URL (no token baked; user enters wallet token)"
 
 # --- 3. PyInstaller ---------------------------------------------------------
 

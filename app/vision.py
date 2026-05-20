@@ -33,6 +33,12 @@ _JPEG_QUALITY = int(os.environ.get("PHANTOM_JPEG_QUALITY", "75"))
 # Build-time config takes precedence in CN-ship builds. Operator dev mode
 # (env vars set, no baked literals) falls through to PHANTOM_MODEL.
 from app.build_config import BRIDGE_TOKEN, BRIDGE_URL, IS_CN_BUILD
+from app import wallet
+
+# User-facing (Chinese) messages for the wallet/quota flow. The runner matches
+# these prefixes to surface them verbatim and to trigger the token prompt.
+NO_TOKEN_MSG = "请输入令牌后再运行（向管理员购买额度）"
+QUOTA_MSG = "额度已用完，请输入新的令牌"
 
 # CN-ship build: pin model + provider + token regardless of env. The whole
 # point is "downloads and runs" — env vars don't exist in the user's world.
@@ -220,7 +226,10 @@ class VisionClient:
         # launchers; google uses its own GEMINI_API_KEY so both can coexist.
         # CN-ship builds: baked bridge token always wins — no env var dance.
         if IS_CN_BUILD:
-            self.api_key = api_key or BRIDGE_TOKEN
+            # Bearer = the user's prepaid wallet token. Dev override
+            # PHANTOM_BRIDGE_TOKEN (BRIDGE_TOKEN) lets operator runs skip the
+            # in-app prompt; an explicit api_key arg wins (tests).
+            self.api_key = api_key or wallet.get_token() or BRIDGE_TOKEN
         elif PROVIDER == "google":
             self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
         else:
@@ -229,8 +238,14 @@ class VisionClient:
             if not os.path.exists(GEMINI_CLI):
                 raise VisionError(f"Gemini CLI not found at {GEMINI_CLI}")
         elif not self.api_key:
+            if IS_CN_BUILD:
+                # No wallet token entered yet — UI will prompt for one.
+                raise VisionError(NO_TOKEN_MSG)
             key_name = "GEMINI_API_KEY" if PROVIDER == "google" else "ANTHROPIC_API_KEY"
             raise VisionError(f"{key_name} not set")
+        # Remaining wallet balance (USD) parsed from the bridge's
+        # X-Quota-Remaining-Usd response header; None until the first call.
+        self.last_remaining_usd: float | None = None
         plat, primary_mod = _platform_strings()
         self.logical_w, self.logical_h = screen_size
         self._last_progress: str = ""  # echoed back to the model each turn
@@ -546,11 +561,26 @@ class VisionClient:
         for attempt in range(len(backoffs) + 1):
             try:
                 with urllib.request.urlopen(req, timeout=300, context=_SSL_CTX) as resp:
+                    # Bridge echoes the wallet's remaining balance (USD) so the
+                    # UI can show the user their own quota, never Gemini tokens.
+                    rem = resp.headers.get("X-Quota-Remaining-Usd")
+                    if rem is not None:
+                        try:
+                            self.last_remaining_usd = float(rem)
+                        except ValueError:
+                            pass
                     payload = json.loads(resp.read())
                 break
             except urllib.error.HTTPError as e:
                 body_bytes = e.read()
                 msg = body_bytes[:300].decode("utf-8", "ignore")
+                # 402 = wallet token out of quota. Won't recover on retry —
+                # surface the friendly Chinese message so the UI prompts for a
+                # new token. (Only the bridge returns 402, and only for an
+                # exhausted balance.)
+                if e.code == 402:
+                    self.last_remaining_usd = 0.0
+                    raise VisionError(QUOTA_MSG)
                 last_err = VisionError(f"http {e.code}: {msg}")
                 # Retry on 429 (rate limit / overloaded) and 5xx (server)
                 if e.code == 429 or 500 <= e.code < 600:

@@ -15,8 +15,9 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 # --- 1. Sanity checks ---
+# Only the bridge URL is baked now. The bearer token is NOT baked — each user
+# pastes their own prepaid wallet token into the app at runtime.
 if (-not $env:PHANTOM_BRIDGE_URL) { throw "PHANTOM_BRIDGE_URL not set" }
-if (-not $env:PHANTOM_BRIDGE_TOKEN) { throw "PHANTOM_BRIDGE_TOKEN not set" }
 if ($env:PHANTOM_BRIDGE_URL -notmatch '^(https://|http://127\.0\.0\.1)') {
     throw "PHANTOM_BRIDGE_URL must be https:// (or http://127.0.0.1 for local test)"
 }
@@ -43,13 +44,14 @@ Copy-Item $cfgPath $backup
 try {
     $content = Get-Content $cfgPath -Raw
     $content = $content.Replace("@@BRIDGE_URL@@", $env:PHANTOM_BRIDGE_URL)
-    $content = $content.Replace("@@BRIDGE_TOKEN@@", $env:PHANTOM_BRIDGE_TOKEN)
+    # Token is intentionally left as the @@BRIDGE_TOKEN@@ placeholder so
+    # build_config resolves it to None — users supply their own wallet token.
     Set-Content $cfgPath $content -NoNewline -Encoding UTF8
 
-    if ((Get-Content $cfgPath -Raw) -match "@@BRIDGE_URL@@|@@BRIDGE_TOKEN@@") {
-        throw "placeholders still present in $cfgPath after substitution"
+    if ((Get-Content $cfgPath -Raw) -match "@@BRIDGE_URL@@") {
+        throw "BRIDGE_URL placeholder still present in $cfgPath after substitution"
     }
-    Write-Host "-> build_config baked: BRIDGE_URL=$($env:PHANTOM_BRIDGE_URL) (token hidden)"
+    Write-Host "-> build_config baked: BRIDGE_URL=$($env:PHANTOM_BRIDGE_URL) (no token baked; user enters wallet token)"
 
     # --- 3. PyInstaller ---
     if (Test-Path build) { Remove-Item -Recurse -Force build }
