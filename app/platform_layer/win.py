@@ -6,6 +6,7 @@ fingerprinting: bezier mouse paths with micro-tremor, log-normal typing
 delays with bigram-aware weights and occasional typos, click dwell, scroll
 inertia. Tunable via app/humanize.py; disable entirely with PHANTOM_HUMANIZE=0.
 """
+import os
 import time
 
 import pyautogui
@@ -317,8 +318,19 @@ class Input:
         if x is not None and y is not None:
             _humanized_move(x, y)
         sign = -1 if direction == "down" else 1
+        # Per-event wheel magnitude. A single 1-notch event barely moves some
+        # web lists (Douyin's follow-roster modal advanced ~1px/notch in field
+        # probes), while a ~10-notch event moves a couple of rows — and the
+        # browser clamps a single event's effect, so going much larger doesn't
+        # overshoot. PHANTOM_SCROLL_STEP tunes it; `clicks` is how many such
+        # events fire, paced so each registers.
+        try:
+            step = int(os.environ.get("PHANTOM_SCROLL_STEP", "10") or 10)
+        except ValueError:
+            step = 10
+        step = max(1, step)
         for i in range(max(1, clicks)):
-            pyautogui.scroll(sign)
+            pyautogui.scroll(sign * step)
             if i < clicks - 1:
                 # Floor of 50 ms so debouncing lists still advance; humanize
                 # adds extra jitter on top when enabled.

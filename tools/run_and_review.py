@@ -73,6 +73,14 @@ def _launch_chrome(profile_dir: str, url: str) -> subprocess.Popen | None:
 
 
 def main() -> int:
+    # The agent's logs and tasks are Chinese; the Windows console defaults to
+    # cp1252 and crashes on them. Force UTF-8 (replace anything unmappable).
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True, help="task string for the agent")
     ap.add_argument("--label", default="run", help="short label for the run dir")
@@ -109,6 +117,7 @@ def main() -> int:
         "PHANTOM_TURN_DUMP": str(turns),
         "PHANTOM_MAX_STEPS": str(args.max_steps),
         "PYTHONUNBUFFERED": "1",
+        "PYTHONIOENCODING": "utf-8",
     })
     missing = [k for k in ("PHANTOM_BRIDGE_URL", "PHANTOM_BRIDGE_TOKEN")
                if not env.get(k)]
@@ -121,7 +130,7 @@ def main() -> int:
         [sys.executable, "-m", "app.main"],
         cwd=str(ROOT), env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        bufsize=1, universal_newlines=True,
+        bufsize=1, text=True, encoding="utf-8", errors="replace",
     )
 
     done = {"reason": None}
