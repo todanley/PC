@@ -147,6 +147,22 @@ class Input:
         time.sleep(humanize.click_dwell_s())
         pyautogui.mouseUp(button="left")
 
+    def _clear_os_overlays(self):
+        """Close any stray OS overlay that grabbed focus before the task —
+        most often the Win11 Start menu, which sits centered on screen and
+        SWALLOWS clicks/scrolls aimed at the browser underneath it (observed
+        repeatedly in field runs, where it ate wheel events meant for a modal
+        list). Escape closes the Start menu, system search, and most popups,
+        and is a harmless no-op on a clean desktop. Two presses spaced apart
+        cover a popup that re-arms. The runner bars the *model* from escape,
+        but pressing it here at task start (no app modal exists yet) is safe."""
+        for _ in range(2):
+            try:
+                pyautogui.press("escape")
+            except Exception:
+                pass
+            time.sleep(0.12)
+
     def browser_prelude(self, zoom_steps: int = 3):
         """One-shot setup for browser-targeted tasks. In order:
 
@@ -172,6 +188,7 @@ class Input:
 
         Mouse-wheel zoom sidesteps both: no `=` key ever leaves
         SendInput, and there are no spurious modifier keystrokes."""
+        self._clear_os_overlays()
         self._ensure_chrome_focused()
 
         import ctypes
@@ -289,17 +306,23 @@ class Input:
     def scroll(self, direction: str = "down", clicks: int = 3,
                x: float | None = None, y: float | None = None):
         """Variable-speed scroll: dispatch wheel ticks one at a time with
-        randomized inter-tick delays so the resulting `wheel` event stream
-        in the browser has natural inertia instead of a single bulk burst."""
+        a paced inter-tick delay so the resulting `wheel` event stream in the
+        browser has natural inertia instead of a single bulk burst.
+
+        The inter-tick delay has a hard FLOOR (independent of humanization):
+        many web lists — notably Douyin's follow-roster modal — debounce a
+        rapid wheel burst into a single tiny scroll, so firing every tick
+        instantly (as happens with PHANTOM_HUMANIZE=0) barely moves the list.
+        Pacing each notch a few tens of ms apart makes them register."""
         if x is not None and y is not None:
             _humanized_move(x, y)
         sign = -1 if direction == "down" else 1
         for i in range(max(1, clicks)):
             pyautogui.scroll(sign)
             if i < clicks - 1:
-                delay = humanize.scroll_step_delay_s()
-                if delay > 0:
-                    time.sleep(delay)
+                # Floor of 50 ms so debouncing lists still advance; humanize
+                # adds extra jitter on top when enabled.
+                time.sleep(max(0.05, humanize.scroll_step_delay_s()))
 
 
 class Screen:
