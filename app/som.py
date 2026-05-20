@@ -297,6 +297,7 @@ def get_engine() -> SetOfMarkEngine:
 
 
 def enabled() -> bool:
-    """SoM is opt-in via PHANTOM_SOM=1. Off by default so existing behavior
-    is untouched until the operator turns it on."""
-    return os.environ.get("PHANTOM_SOM", "0") == "1"
+    """SoM is ON by default; set PHANTOM_SOM=0 to disable (falls back to
+    plain coordinate prompting). The engine still degrades gracefully if the
+    OCR runtime is unavailable, so 'on' is safe even where deps are missing."""
+    return os.environ.get("PHANTOM_SOM", "1") != "0"
