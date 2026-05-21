@@ -19,6 +19,65 @@ pyautogui.FAILSAFE = False  # don't abort if cursor hits a corner mid-task
 pyautogui.PAUSE = 0.0       # we manage our own pacing
 
 
+# ── Unicode keystroke injection (for non-ASCII text, e.g. Chinese) ──────────
+# pyautogui can't type non-ASCII, so the old path copied to the clipboard and
+# pressed Ctrl+V — which on some setups opened the Windows Clipboard-History
+# popup and never pasted, eating Chinese comments. Win32 SendInput with
+# KEYEVENTF_UNICODE injects each character's codepoint directly as a keystroke
+# (WM_CHAR) into the focused control — no clipboard, no IME, no Ctrl+V.
+import ctypes
+from ctypes import wintypes
+
+_ULONG_PTR = wintypes.WPARAM  # pointer-sized integer for dwExtraInfo
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = (("wVk", wintypes.WORD), ("wScan", wintypes.WORD),
+                ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD),
+                ("dwExtraInfo", _ULONG_PTR))
+
+
+class _MOUSEINPUT(ctypes.Structure):  # only here to size the union correctly
+    _fields_ = (("dx", wintypes.LONG), ("dy", wintypes.LONG),
+                ("mouseData", wintypes.DWORD), ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD), ("dwExtraInfo", _ULONG_PTR))
+
+
+class _INPUT_UNION(ctypes.Union):
+    _fields_ = (("ki", _KEYBDINPUT), ("mi", _MOUSEINPUT))
+
+
+class _INPUT(ctypes.Structure):
+    _fields_ = (("type", wintypes.DWORD), ("u", _INPUT_UNION))
+
+
+_INPUT_KEYBOARD = 1
+_KEYEVENTF_KEYUP = 0x0002
+_KEYEVENTF_UNICODE = 0x0004
+
+
+def _type_unicode(text: str) -> None:
+    """Inject `text` as Unicode keystrokes into the focused control. Raises on
+    any Win32 failure so the caller can fall back."""
+    send = ctypes.windll.user32.SendInput
+    for ch in text:
+        code = ord(ch)
+        # BMP chars go in one event; chars above U+FFFF need a surrogate pair.
+        units = [code] if code <= 0xFFFF else [
+            0xD800 + ((code - 0x10000) >> 10),
+            0xDC00 + ((code - 0x10000) & 0x3FF),
+        ]
+        for unit in units:
+            for flags in (_KEYEVENTF_UNICODE,
+                          _KEYEVENTF_UNICODE | _KEYEVENTF_KEYUP):
+                ki = _KEYBDINPUT(0, unit, flags, 0, 0)
+                inp = _INPUT(_INPUT_KEYBOARD, _INPUT_UNION(ki=ki))
+                n = send(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+                if n != 1:
+                    raise OSError("SendInput failed")
+        time.sleep(0.012)  # small per-char gap so the field keeps up
+
+
 _MOD_TRANSLATE = {
     "cmd": "ctrl", "command": "ctrl", "meta": "ctrl", "win": "winleft",
     "option": "alt",
@@ -85,21 +144,17 @@ class Input:
         if not text:
             return
         if any(ord(c) > 127 for c in text):
+            # Primary: inject Unicode codepoints directly (no clipboard / IME /
+            # Ctrl+V). Falls back to clipboard paste only if SendInput fails.
+            try:
+                _type_unicode(text)
+                return
+            except Exception:
+                pass
             try:
                 import pyperclip
                 pyperclip.copy(text)
-                time.sleep(0.12)  # let the clipboard settle before pasting
-                # Defensive: release the Win key before Ctrl+V. If a Win key is
-                # logically held (stray state from earlier input), the `v`
-                # press lands as Win+V and opens the Windows Clipboard History
-                # popup instead of pasting — observed eating Chinese comments
-                # in field testing. A keyUp on a non-held key is a harmless
-                # no-op.
-                for k in ("winleft", "winright"):
-                    try:
-                        pyautogui.keyUp(k)
-                    except Exception:
-                        pass
+                time.sleep(0.12)
                 pyautogui.hotkey("ctrl", "v")
                 time.sleep(0.05)
                 return
