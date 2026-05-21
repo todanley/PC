@@ -132,11 +132,15 @@ def detect(frame_bgr):
         if not merged:
             return None
         # Slider HANDLE: the drag must grab the handle in the track BELOW the
-        # puzzle photo (you can't drag the piece directly). Estimate it at the
-        # left of that track. Clamped to the image. (Live-calibratable.)
+        # puzzle photo (you can't drag the piece directly). Estimate its center
+        # at the left of that track. Constants calibrated against a zoomed
+        # captcha so the point sits in the BUTTON's center (0.06w/0.17h put it
+        # on the button's lower-left edge — borderline). Zooming the page first
+        # (the runner does this on captcha screens) makes the button large
+        # enough that this estimate lands solidly inside it. Clamped to image.
         fh, fw = frame_bgr.shape[:2]
-        handle = (min(fw - 1, x + 0.06 * w),
-                  min(fh - 1, y + h + 0.17 * h))
+        handle = (min(fw - 1, x + 0.10 * w),
+                  min(fh - 1, y + h + 0.11 * h))
         return {"piece": piece_c, "gaps": merged, "handle": handle, "box": box}
     except Exception:
         return None

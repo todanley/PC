@@ -377,6 +377,12 @@ class TaskRunner(QThread):
         # suppressor would silently drop them. PHANTOM_SUPPRESS_REPEAT_CLICKS=0
         # disables it for those runs. Default on (production behavior).
         suppress_repeats = os.environ.get("PHANTOM_SUPPRESS_REPEAT_CLICKS", "1") != "0"
+        # When a slider CAPTCHA is on screen, zoom the page in once so the
+        # puzzle (piece / gap / slider handle) is big enough to detect and drag
+        # reliably — 3 zoom steps make it ~12x larger in area, the difference
+        # between the handle estimate landing ON vs. BESIDE the button. Reset
+        # zoom when the captcha clears. (Tracked across turns.)
+        captcha_zoom_applied = False
         while True:
             step += 1
             if max_steps and step > max_steps:
@@ -443,6 +449,32 @@ class TaskRunner(QThread):
                     shot_for_model = marked
                     self.step_started.emit(
                         step, f"Step {step}: tagged {len(mark_map)} elements")
+
+            # CAPTCHA zoom: when SoM reports a slider puzzle on screen, zoom the
+            # page in ONCE (Ctrl+= ×3) so the puzzle + slider handle are large
+            # enough to localize and drag reliably (≈12x area — proven). The
+            # next loop iteration re-captures the enlarged puzzle, then the
+            # model solves it via slide_captcha. Reset zoom (Ctrl+0) once the
+            # captcha clears. Gated by PHANTOM_CAPTCHA_ZOOM (default on).
+            if os.environ.get("PHANTOM_CAPTCHA_ZOOM", "1") != "0" and som_engine is not None:
+                on_captcha = getattr(som_engine, "last_captcha", None) is not None
+                if on_captcha and not captcha_zoom_applied:
+                    for _ in range(3):
+                        try:
+                            inp.press_combo("ctrl+=")
+                        except Exception:
+                            break
+                        time.sleep(0.3)
+                    captcha_zoom_applied = True
+                    self.step_started.emit(step, f"Step {step}: zoomed in on CAPTCHA")
+                    time.sleep(0.6)
+                    continue  # re-capture the enlarged puzzle next turn
+                if not on_captcha and captcha_zoom_applied:
+                    try:
+                        inp.press_combo("ctrl+0")
+                    except Exception:
+                        pass
+                    captcha_zoom_applied = False
 
             self.step_started.emit(step, f"Step {step}: asking Claude…")
             try:
