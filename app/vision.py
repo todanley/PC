@@ -127,8 +127,9 @@ TOGGLE-BUTTON RULE (any like / follow / save / subscribe / mute, etc.): a single
 Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 {{
-  "action": "click" | "double_click" | "type" | "key" | "scroll" | "drag" | "wait" | "done",
+  "action": "click" | "double_click" | "type" | "key" | "scroll" | "drag" | "slide_captcha" | "wait" | "done",
   "mark": <int>,                    // (SoM mode only) id of a magenta-tagged element to act on; preferred over x/y for click/double_click/type when the target is tagged
+  "piece_mark": <int>, "gap_mark": <int>, // for slide_captcha ONLY: the mark on the puzzle PIECE and the mark on the matching GAP/shadow. The runner drags the slider handle by the exact piece→gap distance.
   "x": <num>, "y": <num>,           // for click / double_click
   "text": "<string>",               // for type
   "key": "<combo>",                 // for key, e.g. "{primary_mod}+space", "enter"
@@ -156,6 +157,8 @@ SET-OF-MARK TAGS: many screenshots have interactive elements outlined with a mag
 ▸ Read the number off the magenta badge that belongs to the SPECIFIC element you mean (the avatar, the follow button, the back arrow). Don't pick the badge of a neighbouring element.
 ▸ A `mark` works for `click`, `double_click`, and `type` (for `type`, the runner clicks the tagged field first, then types your `text`).
 ▸ Only fall back to raw x/y when the exact control you need has NO tag (e.g. an untagged icon). Never snap to the nearest tag for an untagged target — give x/y instead.
+
+SLIDER CAPTCHA: if the screen is a verification puzzle (a piece to slide into a matching shadow), the runner tags the puzzle PIECE and each candidate GAP/shadow with magenta marks. Identify the piece's mark and the GAP whose SHAPE matches the piece, then respond `{"action":"slide_captcha","piece_mark":<piece>,"gap_mark":<matching gap>}`. The runner computes the exact slider distance and drags the handle — you do NOT estimate coordinates or drag yourself. If the puzzle image is still blank/loading, `wait` instead.
 """
 
 

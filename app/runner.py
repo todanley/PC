@@ -514,6 +514,45 @@ class TaskRunner(QThread):
                     time.sleep(_POST_ACTION_DELAY_S)
                     continue
 
+            # slide_captcha: solve a slider jigsaw. The model picked the
+            # puzzle piece + the matching gap (marks); we drag the slider
+            # HANDLE by the exact piece→gap horizontal distance — precision
+            # from image processing, the matching-gap choice from the model.
+            # Geometry (handle position) comes from the SoM captcha detection.
+            if action.get("action") == "slide_captcha":
+                det = getattr(som_engine, "last_captcha", None) if som_engine else None
+                pm = re.sub(r"\D", "", str(action.get("piece_mark", "")))
+                gm = re.sub(r"\D", "", str(action.get("gap_mark", "")))
+                ok = False
+                dist = 0.0
+                if det and mark_map and pm in mark_map and gm in mark_map:
+                    px = mark_map[pm][0]
+                    gx = mark_map[gm][0]
+                    hx, hy = det["handle"]
+                    dist = gx - px
+                    if dist > 5:
+                        try:
+                            inp.drag(hx, hy, hx + dist, hy)
+                            ok = True
+                        except Exception:
+                            ok = False
+                self.step_done.emit(step, {
+                    "action": "slide_captcha",
+                    "reasoning": (f"runner: dragged slider handle by {dist:.0f}px"
+                                  if ok else "runner: captcha solve unavailable"),
+                })
+                if not ok:
+                    pending_feedback = (
+                        "slide_captcha did not run — the puzzle wasn't detected "
+                        "or piece_mark/gap_mark were missing/invalid. If the "
+                        "puzzle image is still loading, use `wait`; otherwise "
+                        "re-read the magenta marks and pick the PIECE mark plus "
+                        "the GAP mark whose shape matches it."
+                    )
+                last_action_type = "drag"
+                time.sleep(_POST_ACTION_DELAY_S)
+                continue
+
             # Hard reject menu-bar clicks (y<25). The system prompt warns
             # against this but smaller models (Kimi K2.5, Haiku 4.5) violate
             # it on Step 1 anyway, opening a macOS dropdown that costs the

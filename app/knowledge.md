@@ -77,11 +77,16 @@ and burns turns.
 
 Common patterns and how to attack them:
 
-  • Slider / drag puzzle ("拖动滑块完成拼图" or a notch-into-shape):
-    estimate the gap's x position and emit a `drag` action from the
-    slider handle's current x to the gap's x at the same y. If a drag
-    action isn't in your action schema, fall back to clicking the gap
-    target — some puzzles accept that.
+  • Slider / drag-into-shape puzzle ("拖动滑块完成拼图", "拖动完成上方
+    拼图", or a piece-into-matching-shadow): the runner tags the puzzle
+    PIECE and each candidate GAP/shadow with magenta marks. Do NOT try to
+    drag by eye. Instead identify the piece's mark and the GAP mark whose
+    SHAPE matches the piece, then emit
+    `{"action":"slide_captcha","piece_mark":<piece>,"gap_mark":<gap>}` —
+    the runner computes the exact distance and drags the slider handle.
+    If the puzzle image is still blank/loading (加载中), `wait` first.
+    If no marks appear on the puzzle, fall back to a manual `drag` from
+    the slider handle rightward toward the matching shadow.
   • Click-sequence quiz ("依次点击 A、B、C" / "click these characters
     in order"): localize each named target in turn and click them in
     the requested sequence within the same turn-budget.
