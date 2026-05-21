@@ -349,6 +349,17 @@ class VisionClient:
         # routed Gemini through the normalized branch and passed Kimi
         # through unchanged, which silently mis-placed every Kimi click.
         gemini_norm = PROVIDER in ("google", "gemini", "moonshot")
+        _coord_keys = ("x", "y", "x1", "y1", "x2", "y2", "scroll_x", "scroll_y")
+        # If ANY coordinate exceeds the 0-1000 grid, the model emitted RAW
+        # IMAGE PIXELS for this action (a recurring Gemini slip). Decide it at
+        # the action level: a pixel x (e.g. 1459) often pairs with a pixel y
+        # that happens to be <1000 (e.g. 227) — splitting conventions per-axis
+        # would map x correctly but mis-place y. So if one is pixels, treat all
+        # of this action's coords as pixels.
+        action_is_pixel = any(
+            isinstance(action.get(k), (int, float)) and action[k] > 1000
+            for k in _coord_keys
+        )
         # x/y for click/type/scroll, plus x1/y1/x2/y2 for drag.
         for k, logical_dim, image_dim in (
             ("x", self.logical_w, self.image_w),
@@ -363,11 +374,16 @@ class VisionClient:
             v = action.get(k)
             if not isinstance(v, (int, float)):
                 continue
-            if 0 <= v <= 1.5:
+            if 0 <= v <= 1.5 and not action_is_pixel:
                 px = round(v * logical_dim)
-            elif gemini_norm:
+            elif gemini_norm and not action_is_pixel:
                 px = round(v / 1000 * image_dim / self.scale)
             else:
+                # Raw image pixels (either a pixel-coordinate provider, or a
+                # normalized provider that slipped and emitted pixels — see
+                # action_is_pixel above). The old code ran a stray >1000 value
+                # through the /1000 branch → e.g. 1459 → ~5600px → clamped to
+                # the screen edge → the click missed and the agent looped.
                 px = round(v / self.scale)
             action[k] = max(0, min(logical_dim - 1, px))
 

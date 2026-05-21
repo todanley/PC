@@ -157,13 +157,19 @@ use the 关注 item in the left sidebar — that opens the following FEED
 (videos/lives), not the list of accounts. Instead:
 
 1. Click **我的** (My) in the left sidebar to open your own profile.
-2. In the profile header, click the **关注** count NUMBER — the DIGITS
-   themselves (e.g. the "69"), which sit just to the RIGHT of the small grey
-   "关注" label, not the label. This opens the **Following roster modal** — a
-   scrollable popup listing each followed account. If the modal does NOT open
-   after your click, you hit the label or empty space, not the number — move a
-   bit RIGHT onto the digits and click again (don't keep clicking the same
-   spot).
+2. In the profile header stats line, click the **关注** count NUMBER — the
+   DIGITS immediately after the small grey "关注" label (e.g. the "54"). The
+   stats line reads left-to-right: **关注 N** (following) → **粉丝 N** (fans) →
+   **获赞 N** (likes); you want the FIRST one (关注), not 粉丝/获赞. Clicking the
+   关注 count opens the **Following roster modal** — a scrollable popup listing
+   each followed account.
+   ⚠️ DISTRACTOR: right next to the 关注 count there is often a
+   "**N人正在直播**" badge (N of the people you follow are live now). Clicking it
+   opens a LIVE-STREAMS panel, NOT the roster — so aim squarely at the 关注
+   digits and do NOT drift right onto 正在直播. The "关注 N" text is usually a
+   single tagged element; prefer clicking that MARK directly over guessing a
+   coordinate. If the modal doesn't open, you likely hit 正在直播 or the label —
+   re-target the digits themselves, don't keep clicking the same spot.
 3. Each row has: avatar (left), username + bio, and a button on the right:
    - **已关注** (grey) = you currently follow them.
    - **相互关注** (grey) = mutual follow.
