@@ -163,13 +163,18 @@ use the 关注 item in the left sidebar — that opens the following FEED
    **获赞 N** (likes); you want the FIRST one (关注), not 粉丝/获赞. Clicking the
    关注 count opens the **Following roster modal** — a scrollable popup listing
    each followed account.
-   ⚠️ DISTRACTOR: right next to the 关注 count there is often a
-   "**N人正在直播**" badge (N of the people you follow are live now). Clicking it
-   opens a LIVE-STREAMS panel, NOT the roster — so aim squarely at the 关注
-   digits and do NOT drift right onto 正在直播. The "关注 N" text is usually a
-   single tagged element; prefer clicking that MARK directly over guessing a
-   coordinate. If the modal doesn't open, you likely hit 正在直播 or the label —
-   re-target the digits themselves, don't keep clicking the same spot.
+   ⚠️ DISTRACTORS to the RIGHT of the 关注 count, in order: a "**N人正在直播**"
+   live badge, then the **粉丝** (fans) count, then **获赞**. The 关注 count is
+   the LEFT-MOST number in the row. If your click misses, do NOT just "move
+   right" — that overshoots onto 正在直播 or 粉丝 (which opens the FANS list).
+   The "关注 N" is usually a single tagged element; **click that MARK directly**
+   rather than guessing a coordinate. If you must use x/y, aim at the digits
+   touching the 关注 label and, if anything, nudge slightly LEFT, never right.
+   ✅ VERIFY THE RIGHT LIST OPENED: the modal title must read **关注 / Following**
+   and its rows must show GREY **已关注 / 相互关注** buttons. If the rows show RED
+   **关注 / 回关** buttons or the title says **粉丝 / Fans**, you opened the FANS
+   list by mistake — close it (click the × or outside the modal) and re-click
+   the 关注 count, further LEFT this time. Do not start scanning a fans list.
 3. Each row has: avatar (left), username + bio, and a button on the right:
    - **已关注** (grey) = you currently follow them.
    - **相互关注** (grey) = mutual follow.
