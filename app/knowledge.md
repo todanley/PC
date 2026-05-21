@@ -152,9 +152,13 @@ use the 关注 item in the left sidebar — that opens the following FEED
 (videos/lives), not the list of accounts. Instead:
 
 1. Click **我的** (My) in the left sidebar to open your own profile.
-2. In the profile header, click the **关注** count NUMBER (e.g. the "69" next
-   to 关注). This opens the **Following roster modal** — a scrollable popup
-   listing each followed account.
+2. In the profile header, click the **关注** count NUMBER — the DIGITS
+   themselves (e.g. the "69"), which sit just to the RIGHT of the small grey
+   "关注" label, not the label. This opens the **Following roster modal** — a
+   scrollable popup listing each followed account. If the modal does NOT open
+   after your click, you hit the label or empty space, not the number — move a
+   bit RIGHT onto the digits and click again (don't keep clicking the same
+   spot).
 3. Each row has: avatar (left), username + bio, and a button on the right:
    - **已关注** (grey) = you currently follow them.
    - **相互关注** (grey) = mutual follow.

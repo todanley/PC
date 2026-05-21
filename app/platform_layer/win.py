@@ -88,8 +88,20 @@ class Input:
             try:
                 import pyperclip
                 pyperclip.copy(text)
-                time.sleep(0.05)
+                time.sleep(0.12)  # let the clipboard settle before pasting
+                # Defensive: release the Win key before Ctrl+V. If a Win key is
+                # logically held (stray state from earlier input), the `v`
+                # press lands as Win+V and opens the Windows Clipboard History
+                # popup instead of pasting — observed eating Chinese comments
+                # in field testing. A keyUp on a non-held key is a harmless
+                # no-op.
+                for k in ("winleft", "winright"):
+                    try:
+                        pyautogui.keyUp(k)
+                    except Exception:
+                        pass
                 pyautogui.hotkey("ctrl", "v")
+                time.sleep(0.05)
                 return
             except ImportError:
                 pass
