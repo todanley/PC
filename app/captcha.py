@@ -40,9 +40,15 @@ def _find_puzzle(cv2, frame_bgr):
     sat = cv2.morphologyEx(sat, cv2.MORPH_CLOSE,
                            cv2.getStructuringElement(cv2.MORPH_RECT, (31, 31)))
     cnts, _ = cv2.findContours(sat, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    fh, fw = frame_bgr.shape[:2]
     best = None
     for c in cnts:
         x, y, w, h = cv2.boundingRect(c)
+        # Reject region that's basically the whole page (a colorful normal
+        # page, not a puzzle card): a real puzzle photo is a bounded rectangle
+        # well inside the verification card.
+        if (w * h) > 0.70 * fw * fh or w > 0.85 * fw:
+            continue
         if w > 250 and h > 140 and 1.2 < w / h < 3.0 and (best is None or w * h > best[4]):
             best = (x, y, w, h, w * h)
     return best[:4] if best else None

@@ -195,24 +195,43 @@ class Input:
         pyautogui.hotkey(*translated)
 
     def drag(self, x1: float, y1: float, x2: float, y2: float):
-        """Press at (x1,y1), drag along a bezier path to (x2,y2), release.
-        The path uses the same humanization as Input.move_to so slider
-        CAPTCHAs (Douyin's puzzle slider, etc.) see a realistic
-        hand-driven motion."""
+        """Press at (x1,y1), drag along a human-like eased path to (x2,y2),
+        release.
+
+        The motion — acceleration/deceleration (smoothstep), small per-step
+        jitter, a brief overshoot-then-settle, and dwells around the
+        press/release — is generated HERE and is INDEPENDENT of
+        PHANTOM_HUMANIZE. Slider CAPTCHAs (Douyin's puzzle slider, etc.)
+        run behavioral analysis on the drag and REJECT robotic motion
+        (straight line, constant velocity, no dwell). With humanization
+        globally disabled the old path fell back to a single linear
+        `moveTo`, which the puzzle silently refused — so for `drag` a
+        realistic curve is a correctness requirement, not just anti-bot
+        pacing, and we always trace one."""
+        import random
         _humanized_move(x1, y1)
-        time.sleep(humanize.click_dwell_s())
+        time.sleep(0.12)
         pyautogui.mouseDown(button="left")
-        time.sleep(humanize.click_dwell_s())
-        distance = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
-        duration = max(0.3, humanize.move_duration_s(distance) * 1.5)
-        if humanize.ENABLED and duration > 0:
-            for px, py, dt in humanize.bezier_path(x1, y1, x2, y2, duration):
-                pyautogui.moveTo(px, py)
-                if dt > 0:
-                    time.sleep(dt)
-        else:
-            pyautogui.moveTo(x2, y2, duration=0.6)
-        time.sleep(humanize.click_dwell_s())
+        time.sleep(0.16)
+        dx, dy = x2 - x1, y2 - y1
+        dist = (dx * dx + dy * dy) ** 0.5
+        steps = max(25, int(dist / 10))
+        # A hand slightly overshoots a fast slider throw, then settles back.
+        overshoot = min(12.0, dist * 0.04) if dist > 50 else 0.0
+        for i in range(1, steps + 1):
+            t = i / steps
+            ease = t * t * (3 - 2 * t)            # smoothstep: accel → decel
+            ox = overshoot * ease if i > steps - 4 else 0.0
+            pyautogui.moveTo(x1 + dx * ease + ox,
+                             y1 + dy * ease + random.uniform(-1.0, 1.0))
+            time.sleep(random.uniform(0.006, 0.020))
+        if overshoot:
+            for _ in range(4):                    # settle onto the target
+                pyautogui.moveTo(x2 + random.uniform(-1.2, 1.2),
+                                 y2 + random.uniform(-1.2, 1.2))
+                time.sleep(random.uniform(0.02, 0.05))
+        pyautogui.moveTo(x2, y2)
+        time.sleep(0.14)
         pyautogui.mouseUp(button="left")
 
     def _clear_os_overlays(self):
