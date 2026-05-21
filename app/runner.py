@@ -334,25 +334,11 @@ class TaskRunner(QThread):
         # load yet) so it's safe to do unconditionally behind the flag.
         som_engine = som.get_engine() if som.enabled() else None
 
-        # Browser prelude: maximize the focused window + bump zoom so the
-        # model has bigger targets to localize. Fires once per task before
-        # any vision call. Disabled via PHANTOM_BROWSER_PRELUDE=0; zoom
-        # level tunable via PHANTOM_BROWSER_ZOOM_STEPS (each step is +10 %).
-        if os.environ.get("PHANTOM_BROWSER_PRELUDE", "1") != "0":
-            if hasattr(inp, "browser_prelude"):
-                steps = int(os.environ.get("PHANTOM_BROWSER_ZOOM_STEPS", "3"))
-                try:
-                    inp.browser_prelude(zoom_steps=steps)
-                except Exception:
-                    # Prelude is a nice-to-have, not load-bearing — never
-                    # let a stray IME / focus issue kill the whole run.
-                    pass
-
-        # B5: brief warm-up before the first action so we don't fire at t=0
-        # (a robot signature). Real users take a moment to orient.
-        warm = humanize.warmup_pause_s()
-        if warm > 0:
-            time.sleep(warm)
+        # No setup actions before the task: the run starts from EXACTLY the
+        # screen state the user hands us (whatever app/window is open). The
+        # very first turn is the model's — it looks at the current screen and
+        # decides. We do not open/focus/maximize/zoom any app, and we don't
+        # touch the mouse or keyboard before the first screenshot.
 
         step = 0
         last_action_type: str = "click"
@@ -418,17 +404,17 @@ class TaskRunner(QThread):
                     actions_since_break = 0
 
             _refocus()
-            # Park the cursor over the typical content area before
-            # screenshotting. Many app UIs (e.g. Douyin's single-video
-            # action rail) only render hover-triggered controls when the
-            # cursor is over the content; without this they're invisible
-            # to the model and it hallucinates coordinates for elements
-            # that aren't actually drawn.
-            try:
-                inp.move_to(self._scroll_default_x, self._scroll_default_y)
-                time.sleep(0.25)  # let hover UI paint
-            except Exception:
-                pass
+            # Park the cursor over the content area before screenshotting so
+            # hover-triggered controls (e.g. Douyin's video action rail) render
+            # for the model. SKIPPED on the first turn: turn 1 must capture the
+            # exact state the user handed us, untouched — the model drives from
+            # there (and can move the mouse itself if it needs a hover reveal).
+            if step > 1:
+                try:
+                    inp.move_to(self._scroll_default_x, self._scroll_default_y)
+                    time.sleep(0.25)  # let hover UI paint
+                except Exception:
+                    pass
 
             self.step_started.emit(step, f"Step {step}: capturing screen…")
             shot = self._shot_path(step)
