@@ -168,3 +168,30 @@ use the 关注 item in the left sidebar — that opens the following FEED
    runner scrolls a sensible point inside a centred modal by default.
 6. Accounts you already unfollowed stay in the list showing red 关注; skip
    them on later passes.
+
+## App: Douyin (douyin.com) — the video feed (like / favorite / comment / follow)
+
+The 推荐 (Recommended) and 关注 (Following) feeds are a full-screen, one-video-
+at-a-time player. Key facts:
+
+- **Advancing to the next video: use `key: down` (ArrowDown).** This is the
+  reliable way to move to the next item — the mouse wheel often does NOT reach
+  the player and leaves you stuck on the same video. (This is the one place to
+  prefer the keyboard over the mouse on Douyin.) Press it again to keep going.
+- **Live streams** (marked 直播中, with an 进入直播间 button) are NOT regular
+  videos and have no like/favorite/comment rail — `key: down` past them until a
+  normal video appears.
+- A normal video has a vertical **action rail on the RIGHT edge**, top to
+  bottom: the creator avatar (often with a red **+** = follow), **点赞** (heart
+  = like), **评论** (speech bubble = comment, shows a count), **收藏** (a star
+  ★ = favorite/bookmark), **分享** (share). The icon turns highlighted/coloured
+  once activated.
+  - **Favorite** → click the **收藏** star. Done when it highlights (yellow).
+  - **Like** → click the **点赞** heart. Done when it turns red.
+  - **Follow the creator** → click the red **+** on the avatar (it disappears
+    once followed). These are all toggles — one click; verify the icon changed,
+    then move on (don't click again).
+- **Comment:** click the **评论** (speech-bubble) icon to open the comment
+  panel on the right, click the "说点什么..." input box at the bottom of that
+  panel, `type` your comment, then click the **发送 / 发布** (send) button (or
+  the comment won't post). Verify your comment appears in the list.
