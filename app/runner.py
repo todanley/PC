@@ -414,14 +414,22 @@ class TaskRunner(QThread):
                     actions_since_break = 0
 
             _refocus()
-            # Park the cursor over the content area before screenshotting so
-            # hover-triggered controls (e.g. Douyin's video action rail) render
-            # for the model. SKIPPED on the first turn: turn 1 must capture the
-            # exact state the user handed us, untouched — the model drives from
-            # there (and can move the mouse itself if it needs a hover reveal).
+            # Park the cursor before screenshotting so hover-triggered controls
+            # render. SKIPPED on turn 1 (capture the user's exact state).
+            #
+            # Default park = content center, which reveals hover-only controls
+            # like Douyin's video action rail. BUT if the PREVIOUS action was a
+            # click, the cursor is sitting on something the model just opened —
+            # moving it to center fires a mouse-leave that CLOSES a
+            # hover-dismissed dropdown it just opened (e.g. Douyin's ⋯ → 拉黑
+            # menu, which vanished the instant the cursor recentred). In that
+            # case keep the cursor on the last click point so the menu stays up.
             if step > 1:
+                park_xy = (self._scroll_default_x, self._scroll_default_y)
+                if last_action_type in ("click", "double_click") and last_click_xy is not None:
+                    park_xy = last_click_xy
                 try:
-                    inp.move_to(self._scroll_default_x, self._scroll_default_y)
+                    inp.move_to(park_xy[0], park_xy[1])
                     time.sleep(0.25)  # let hover UI paint
                 except Exception:
                     pass
