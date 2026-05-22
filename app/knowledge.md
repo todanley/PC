@@ -189,13 +189,23 @@ use the 关注 item in the left sidebar — that opens the following FEED
 6. Accounts you already unfollowed stay in the list showing red 关注; skip
    them on later passes.
 7. **Opening an account's profile + getting back.** Clicking an account's
-   avatar/name opens their profile in a **NEW browser TAB** (the Following-list
-   tab stays open underneath). Douyin profile pages have **no on-page back
-   arrow** — do NOT hunt for one at the top-left, and do NOT click the browser
-   toolbar (it's at the screen's top edge, which is blocked). To return to the
-   Following list, **CLOSE the profile tab** with `key: ctrl+w` — this closes
-   the current tab and returns you to the previous tab where the Following list
-   is still open. Then continue with the next account.
+   avatar/name opens their profile in a **NEW browser TAB**. Douyin profile
+   pages have **no on-page back arrow** — do NOT hunt for one at the top-left,
+   and do NOT click the browser toolbar (top edge, blocked). To return, **CLOSE
+   the profile tab** with `key: ctrl+w`.
+   ⚠️ AFTER YOU RETURN, THE FOLLOWING-LIST MODAL IS USUALLY **CLOSED** (acting
+   on an account — especially blocking/unfollowing — dismisses it). So before
+   clicking the next account you MUST first **re-open the list**: click **我的**
+   then the **关注 count**, and confirm the roster (rows of accounts with
+   已关注 / 相互关注 buttons) is actually visible. Do NOT click an account-avatar
+   position unless that roster is clearly on screen — if the modal is closed,
+   that spot is your own profile's video grid and the click opens a **full-
+   screen video player** (a single video with a like/comment/收藏 rail down the
+   right side) and you get stuck "scrolling videos."
+   ⚠️ IF YOU LAND IN A FULL-SCREEN VIDEO PLAYER (single video + right-side
+   like/comment rail), you mis-clicked: close it (the **✕** at the top-left, or
+   `key: ctrl+w` if it opened a tab) and re-open the following list — do NOT
+   start scrolling/interacting with videos; that is not the task.
 
 ## App: Douyin (douyin.com) — the video feed (like / favorite / comment / follow)
 
