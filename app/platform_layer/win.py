@@ -194,6 +194,94 @@ class Input:
         translated = [_MOD_TRANSLATE.get(p, _KEY_TRANSLATE.get(p, p)) for p in parts]
         pyautogui.hotkey(*translated)
 
+    def _ctrl_key(self) -> str:
+        """Return the pyautogui key name that produces a REAL left-Ctrl on this
+        machine, detected once and cached.
+
+        Some setups swap Ctrl<->Win at the scancode level (observed on this
+        operator's machine — pyautogui 'ctrl' actually presses LWIN). That
+        turns every Ctrl shortcut into a Win shortcut: Ctrl+= → Win+= → the
+        Windows MAGNIFIER, a lone Ctrl tap → the Start menu, Ctrl+V → Win+V
+        clipboard history. We probe the live key state: send 'ctrl' and check
+        whether VK_CONTROL actually went down; if not, the machine is swapped
+        and 'winleft' yields the real Ctrl. The 'ctrl' probe tap opens the
+        Start menu on a swapped machine, so we dismiss it with Escape."""
+        cached = getattr(self, "_ctrl_key_cache", None)
+        if cached:
+            return cached
+        # Explicit operator override (set PHANTOM_CTRL_KEY=winleft on a
+        # Ctrl<->Win-swapped machine to skip probing entirely).
+        override = os.environ.get("PHANTOM_CTRL_KEY", "").strip()
+        if override:
+            self._ctrl_key_cache = override
+            return override
+        key = "ctrl"
+        try:
+            import win32api
+            def ctrl_down():
+                return bool(win32api.GetAsyncKeyState(0x11) & 0x8000)
+            pyautogui.keyDown("ctrl")
+            time.sleep(0.04)
+            is_ctrl = ctrl_down()
+            if not is_ctrl:
+                # 'ctrl' is mapped to Win on this machine. Guard the release
+                # with an Alt tap so the Win press is NOT a lone tap (which
+                # would pop the Start menu); the menu opens only on a solo Win.
+                pyautogui.keyDown("alt")
+                time.sleep(0.02)
+                pyautogui.keyUp("alt")
+            pyautogui.keyUp("ctrl")
+            time.sleep(0.04)
+            if not is_ctrl:
+                # Confirm 'winleft' yields a real Ctrl (a harmless Ctrl tap).
+                pyautogui.keyDown("winleft")
+                time.sleep(0.04)
+                if ctrl_down():
+                    key = "winleft"
+                pyautogui.keyUp("winleft")
+                time.sleep(0.04)
+        except Exception:
+            key = "ctrl"
+        self._ctrl_key_cache = key
+        return key
+
+    def _wheel_zoom(self, steps: int, direction: int):
+        """Browser zoom via Ctrl + mouse-wheel. NEVER use keyboard Ctrl+= for
+        zoom: pyautogui's hotkey delivery can let the `=` land while Windows
+        still treats a Win key as held, firing Win+= → the Windows MAGNIFIER.
+        Ctrl+wheel over the page only scales page content within Chrome — no
+        `=` keystroke, no Magnifier. Uses _ctrl_key() so it sends a REAL Ctrl
+        even on Ctrl<->Win-swapped machines. Wheel delta is ±120 per step
+        (one WHEEL_DELTA = one Chrome zoom level; a raw ±1 is too small to
+        register). `direction` is +1 (in) / -1 (out). Cursor is parked over
+        the page center first since Ctrl+wheel zoom applies where it lands."""
+        ck = self._ctrl_key()
+        try:
+            with mss.mss() as sct:
+                mon = sct.monitors[1]
+                cx, cy = mon["width"] // 2, mon["height"] // 2
+            pyautogui.moveTo(cx, cy, duration=0)
+            time.sleep(0.05)
+            pyautogui.keyDown(ck)
+            time.sleep(0.05)
+            for _ in range(max(0, steps)):
+                pyautogui.scroll(direction * 120)
+                time.sleep(0.12)
+        finally:
+            try:
+                pyautogui.keyUp(ck)
+            except Exception:
+                pass
+
+    def zoom_in(self, steps: int = 5):
+        """Zoom the page IN by `steps` Chrome zoom levels (Ctrl+wheel)."""
+        self._wheel_zoom(steps, 1)
+
+    def zoom_reset(self, steps: int = 5):
+        """Zoom the page back OUT by `steps` levels (Ctrl+wheel), undoing an
+        equal zoom_in. Wheel-based so it never risks the Magnifier."""
+        self._wheel_zoom(steps, -1)
+
     def drag(self, x1: float, y1: float, x2: float, y2: float):
         """Press at (x1,y1), drag along a human-like eased path to (x2,y2),
         release.

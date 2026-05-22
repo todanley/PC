@@ -159,6 +159,10 @@ def _refocus():
 # screenshot. Lets click animations / page transitions render before the
 # next vision call.
 _POST_ACTION_DELAY_S = 1.0
+# Chrome zoom levels (Ctrl+wheel ticks) to enlarge a slider CAPTCHA so its
+# piece/gap/handle are big enough to detect + drag reliably. Each tick is one
+# Chrome zoom step (100→110→125→150→175→200…); ~5 ≈ 175-200%.
+_CAPTCHA_ZOOM_STEPS = 5
 # Tasks that say "all / every / 所有 / 全部" implicitly traverse a list.
 # Models often declare `done` after seeing the visible top of the list
 # without verifying nothing's hidden below. The runner intercepts those
@@ -456,22 +460,23 @@ class TaskRunner(QThread):
             # next loop iteration re-captures the enlarged puzzle, then the
             # model solves it via slide_captcha. Reset zoom (Ctrl+0) once the
             # captcha clears. Gated by PHANTOM_CAPTCHA_ZOOM (default on).
-            if os.environ.get("PHANTOM_CAPTCHA_ZOOM", "1") != "0" and som_engine is not None:
+            if (os.environ.get("PHANTOM_CAPTCHA_ZOOM", "1") != "0"
+                    and som_engine is not None and hasattr(inp, "zoom_in")):
                 on_captcha = getattr(som_engine, "last_captcha", None) is not None
                 if on_captcha and not captcha_zoom_applied:
-                    for _ in range(3):
-                        try:
-                            inp.press_combo("ctrl+=")
-                        except Exception:
-                            break
-                        time.sleep(0.3)
+                    # Ctrl+WHEEL zoom (browser), NOT keyboard Ctrl+= — the
+                    # latter can race into Win+= → Windows Magnifier.
+                    try:
+                        inp.zoom_in(_CAPTCHA_ZOOM_STEPS)
+                    except Exception:
+                        pass
                     captcha_zoom_applied = True
                     self.step_started.emit(step, f"Step {step}: zoomed in on CAPTCHA")
                     time.sleep(0.6)
                     continue  # re-capture the enlarged puzzle next turn
                 if not on_captcha and captcha_zoom_applied:
                     try:
-                        inp.press_combo("ctrl+0")
+                        inp.zoom_reset(_CAPTCHA_ZOOM_STEPS)
                     except Exception:
                         pass
                     captcha_zoom_applied = False
