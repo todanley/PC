@@ -190,8 +190,19 @@ class Input:
         # Modifier+key combos are atomic from the user's perspective —
         # humanizing the inter-key timing here doesn't help and risks
         # breaking shortcuts that need precise simultaneity (e.g. Ctrl+V).
-        parts = [p.strip().lower() for p in combo.split("+")]
-        translated = [_MOD_TRANSLATE.get(p, _KEY_TRANSLATE.get(p, p)) for p in parts]
+        #
+        # Ctrl/Cmd aliases are routed through _ctrl_key() so they send a REAL
+        # Ctrl even on Ctrl<->Win-swapped machines. Without this, 'ctrl+w'
+        # becomes Win+W (Windows Widgets), 'ctrl+v' becomes Win+V (clipboard
+        # history), etc. — the same swap that made zoom open the Magnifier.
+        ctrl_aliases = ("ctrl", "ctrlleft", "ctrlright", "control",
+                        "cmd", "command", "meta")
+        translated = []
+        for p in (s.strip().lower() for s in combo.split("+")):
+            if p in ctrl_aliases:
+                translated.append(self._ctrl_key())
+            else:
+                translated.append(_MOD_TRANSLATE.get(p, _KEY_TRANSLATE.get(p, p)))
         pyautogui.hotkey(*translated)
 
     def _ctrl_key(self) -> str:
