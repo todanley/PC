@@ -206,6 +206,26 @@ use the 关注 item in the left sidebar — that opens the following FEED
    like/comment rail), you mis-clicked: close it (the **✕** at the top-left, or
    `key: ctrl+w` if it opened a tab) and re-open the following list — do NOT
    start scrolling/interacting with videos; that is not the task.
+   ⚠️ Opening a profile often triggers a slider CAPTCHA first (sometimes a
+   page titled **验证码中间页**) — solve the slider; the profile then loads.
+   Solve it on whatever tab/page it appears on; do not open more tabs.
+8. **Getting through the WHOLE list — track checked accounts and scroll past
+   them.** The modal shows only ~5–6 accounts at a time and **RESETS TO THE TOP
+   every time you re-open it**, so the danger is re-checking the same top
+   accounts forever (an infinite loop). To actually progress:
+   - In your `progress` notes keep a running list of EVERY username you have
+     already checked, e.g. `checked: 猫三椰, 噜噜日常, 水豚噜噜, 香猪探影 …`.
+   - After the modal (re-)opens it is at the TOP, showing accounts you've
+     already checked. Do NOT open them again — **SCROLL DOWN over the account
+     rows** (put the scroll point on the list itself, ~centre of the modal)
+     until the visible usernames are ones NOT in your checked list, then open
+     the FIRST new one.
+   - If you return from a profile and the modal is **still open** (roster
+     visible), do NOT re-open it — re-opening resets to the top; just scroll to
+     the next unchecked account and continue.
+   - If a scroll reveals no new names, scroll again (a couple of times) before
+     concluding. You are FINISHED only once you've scrolled to the very BOTTOM
+     of the list and every visible account is already in your checked list.
 
 ## App: Douyin (douyin.com) — the video feed (like / favorite / comment / follow)
 
