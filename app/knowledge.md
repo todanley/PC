@@ -196,15 +196,14 @@ use the 关注 item in the left sidebar — that opens the following FEED
    Following list, **CLOSE the profile tab** with `key: ctrl+w` — this closes
    the current tab and returns you to the previous tab where the Following list
    is still open. Then continue with the next account.
-8. **To BLOCK (拉黑) an account:** on their profile, find the small **···**
-   (more) button — it sits immediately to the RIGHT of the **分享主页** (share)
-   button. The dots usually have NO mark of their own (OCR can't read "···"),
-   and 分享主页 IS tagged — so do NOT click the 分享主页 button/mark (its mark
-   center is on the text, left of the dots, and 分享主页 only opens a share
-   panel). Instead click the **dots themselves with x/y**, aiming just to the
-   RIGHT of the 分享主页 text (≈ its right edge + a little). That opens a
-   dropdown — click **拉黑** in it (it's hover-dismissed, so act promptly) and
-   confirm in the dialog. (Blocking also removes them from your following list.)
+8. **To BLOCK (拉黑) an account:** on their profile, the small **···** (more)
+   button sits immediately to the RIGHT of the **分享主页** (share) button. The
+   runner tags it with its own mark (anchored just right of 分享主页) — click
+   THAT mark, not the 分享主页 button/mark (分享主页 only opens a share panel).
+   If for some reason the dots have no mark, click x/y just right of the
+   分享主页 text. That opens a dropdown — click **拉黑** in it (it's
+   hover-dismissed, so act promptly) and confirm in the dialog. (Blocking also
+   removes them from your following list.)
 
 ## App: Douyin (douyin.com) — the video feed (like / favorite / comment / follow)
 

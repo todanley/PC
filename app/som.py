@@ -57,6 +57,13 @@ _ICON_MAX_DENSITY = float(os.environ.get("PHANTOM_SOM_ICON_MAX_DENSITY", "0.55")
 # element (dedup OCR vs icon proposals, and near-duplicate contours).
 _DEDUP_DIST = int(os.environ.get("PHANTOM_SOM_DEDUP_PX", "22"))
 
+# Labels that are reliably read by OCR and have a small "···" (more) button
+# immediately to their RIGHT which is too small/faint to detect on its own
+# (≈2px dots). We anchor a precise mark just right of these labels so the model
+# can click the more-menu. (e.g. Douyin profile: 拉黑/block is in the ··· menu
+# right of 分享主页.) Match is a substring test.
+_MORE_ANCHORS = ("分享主页",)
+
 
 class _Box:
     __slots__ = ("x0", "y0", "x1", "y1", "label", "kind")
@@ -243,6 +250,21 @@ class SetOfMarkEngine:
         image_bgr = cv2.cvtColor(np.array(pil_src), cv2.COLOR_RGB2BGR)
 
         text_boxes = self._detect_text(image_bgr)
+
+        # More-button anchor: a "···" (more) button is too small/faint to
+        # detect directly (≈2px dots), but it sits at a fixed offset to the
+        # RIGHT of certain action labels OCR reads reliably. Add an exact mark
+        # there so the model can click the more-menu (see _MORE_ANCHORS).
+        anchor_boxes = []
+        for b in text_boxes:
+            if any(a in b.label for a in _MORE_ANCHORS):
+                h = max(1, b.y1 - b.y0)
+                mcx = b.x1 + int(0.8 * h)
+                mcy = b.cy
+                rr = max(12, int(0.7 * h))
+                anchor_boxes.append(_Box(mcx - rr, mcy - rr, mcx + rr, mcy + rr,
+                                         label="more", kind="more"))
+        text_boxes.extend(anchor_boxes)
 
         # CAPTCHA assist: if the OCR text says this is a verification/slider
         # puzzle, locate the piece + candidate gaps and tag them as priority
