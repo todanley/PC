@@ -197,11 +197,10 @@ use the 关注 item in the left sidebar — that opens the following FEED
    the current tab and returns you to the previous tab where the Following list
    is still open. Then continue with the next account.
 8. **To BLOCK (拉黑) an account:** on their profile, the small **···** (more)
-   button sits immediately to the RIGHT of the **分享主页** (share) button. The
-   runner tags it with its own mark (anchored just right of 分享主页) — click
-   THAT mark, not the 分享主页 button/mark (分享主页 only opens a share panel).
-   If for some reason the dots have no mark, click x/y just right of the
-   分享主页 text. That opens a dropdown — click **拉黑** in it (it's
+   button sits immediately to the RIGHT of the **分享主页** (share) button. It
+   usually has no mark of its own, so click the **dots with x/y, aiming just to
+   the RIGHT of the 分享主页 text** — NOT the 分享主页 button/mark (分享主页 only
+   opens a share panel). That opens a dropdown — click **拉黑** in it (it's
    hover-dismissed, so act promptly) and confirm in the dialog. (Blocking also
    removes them from your following list.)
 
