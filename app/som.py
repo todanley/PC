@@ -28,6 +28,7 @@ sends the image without resizing. The caller converts to OS click-space the
 same way it does for model-returned pixel coords.
 """
 import os
+import sys
 import threading
 
 # All heavy deps (cv2, numpy, rapidocr, PIL.ImageFont) are imported lazily
@@ -56,6 +57,16 @@ _ICON_MAX_DENSITY = float(os.environ.get("PHANTOM_SOM_ICON_MAX_DENSITY", "0.55")
 # Two boxes whose centers are within this many px are treated as the same
 # element (dedup OCR vs icon proposals, and near-duplicate contours).
 _DEDUP_DIST = int(os.environ.get("PHANTOM_SOM_DEDUP_PX", "22"))
+
+# UI Automation (Windows) element source: reads Chrome's accessibility tree at
+# the OS level (detection-free — invisible to page JS) for precise boxes on
+# semantic controls that OCR/icons miss (e.g. a tiny "···" more-button). Boxes
+# come back in screen coords == screenshot-pixel space. Default OFF; the dev
+# harness enables it (PHANTOM_SOM_UIA=1). Windows-only; lazy-loaded.
+_UIA_ENABLED = os.environ.get("PHANTOM_SOM_UIA", "0") == "1"
+_UIA_MAX = int(os.environ.get("PHANTOM_SOM_UIA_MAX", "80"))
+_UIA_BUDGET_S = float(os.environ.get("PHANTOM_SOM_UIA_BUDGET", "1.0"))
+_UIA_MAX_DEPTH = int(os.environ.get("PHANTOM_SOM_UIA_DEPTH", "25"))
 
 
 class _Box:
@@ -92,6 +103,9 @@ class SetOfMarkEngine:
         # (piece/gaps/handle/box) when a captcha is on screen, else None. The
         # runner reads this to execute a `slide_captcha` action.
         self.last_captcha = None
+        # Cached primary-monitor origin/size for mapping UIA screen rects into
+        # screenshot-pixel space (computed once, lazily).
+        self._uia_geom = None
 
     # ---- engine loading -------------------------------------------------
 
@@ -210,19 +224,73 @@ class SetOfMarkEngine:
                 out.append(b)
         return out
 
-    def _merge(self, captcha_boxes: list, text_boxes: list, icon_boxes: list) -> list:
+    def _uia_origin_and_size(self):
+        """Primary-monitor (left, top) and (width, height), cached. UIA returns
+        absolute screen rects; subtracting this origin lands them in the mss
+        screenshot's pixel space (mss grabs monitors[1])."""
+        if self._uia_geom is not None:
+            return self._uia_geom
+        origin, size = (0, 0), None
+        try:
+            import mss
+            with mss.mss() as sct:
+                mon = sct.monitors[1]
+                origin = (int(mon["left"]), int(mon["top"]))
+                size = (int(mon["width"]), int(mon["height"]))
+        except Exception:
+            origin, size = (0, 0), None
+        self._uia_geom = (origin, size)
+        return self._uia_geom
+
+    def _detect_uia(self) -> list:
+        """Interactive elements of the focused Chrome window, read via Windows
+        UI Automation (the accessibility tree). Boxes come back in
+        screenshot-pixel space. Windows-only; returns [] when disabled,
+        off-Windows, the dep is missing, or on any failure (never raises)."""
+        if not _UIA_ENABLED or sys.platform != "win32":
+            return []
+        try:
+            from . import uia_win
+        except Exception:
+            return []
+        try:
+            origin, size = self._uia_origin_and_size()
+            rects = uia_win.collect_chrome_elements(
+                max_elements=_UIA_MAX,
+                time_budget_s=_UIA_BUDGET_S,
+                max_depth=_UIA_MAX_DEPTH,
+                origin_xy=origin,
+                screen_wh=size,
+            )
+        except Exception:
+            return []
+        boxes = []
+        for (x0, y0, x1, y1, name, _ctype) in rects:
+            if x1 - x0 < 1 or y1 - y0 < 1:
+                continue
+            boxes.append(_Box(int(x0), int(y0), int(x1), int(y1),
+                              label=str(name)[:40], kind="uia"))
+        return boxes
+
+    def _merge(self, captcha_boxes: list, uia_boxes: list,
+               text_boxes: list, icon_boxes: list) -> list:
         """Combine sources under a strict priority: CAPTCHA shapes first (they
-        must never be dropped), then every text mark (OCR is the reliable
-        signal), then icon marks fill whatever budget is left — deduped so a
-        lower-priority box never shadows a higher one. Icons get their own cap
-        so a noisy contour pass can't crowd out the rest or flood the image."""
+        must never be dropped), then UIA accessibility boxes (precise + labeled
+        — they SUPERSEDE a nearby OCR glyph, whose centroid is off for an
+        icon+label control), then text marks, then icon marks fill whatever
+        budget is left. Deduped so a lower-priority box never shadows a higher
+        one. Icons get their own cap so a noisy contour pass can't flood it."""
         captcha_kept = self._dedup_against(captcha_boxes, [])[:_MAX_MARKS]
-        text_kept = self._dedup_against(text_boxes, captcha_kept)
-        text_kept = text_kept[:max(0, _MAX_MARKS - len(captcha_kept))]
-        budget = max(0, _MAX_MARKS - len(captcha_kept) - len(text_kept))
-        icon_kept = self._dedup_against(icon_boxes, captcha_kept + text_kept)
+        uia_kept = self._dedup_against(uia_boxes, captcha_kept)
+        uia_kept = uia_kept[:max(0, _MAX_MARKS - len(captcha_kept))]
+        used = captcha_kept + uia_kept
+        text_kept = self._dedup_against(text_boxes, used)
+        text_kept = text_kept[:max(0, _MAX_MARKS - len(used))]
+        used = used + text_kept
+        budget = max(0, _MAX_MARKS - len(used))
+        icon_kept = self._dedup_against(icon_boxes, used)
         icon_kept = icon_kept[:min(budget, _MAX_ICONS)]
-        return captcha_kept + text_kept + icon_kept
+        return captcha_kept + uia_kept + text_kept + icon_kept
 
     def mark_screenshot(self, image_path: str, output_path: str) -> dict:
         """Detect elements on `image_path`, write a tagged copy to
@@ -267,11 +335,16 @@ class SetOfMarkEngine:
         except Exception:
             self.last_captcha = None
 
+        # UIA accessibility boxes (Windows, reads the live Chrome a11y tree).
+        # Suppressed on captcha screens (like icons) — a verification page has
+        # no useful page tree and we want the puzzle marks to stand out.
+        uia_boxes = self._detect_uia() if not captcha_boxes else []
+
         # On a captcha screen suppress the noisy icon pass so the puzzle marks
         # stand out; otherwise run icons as usual.
         icon_boxes = (self._detect_icons(image_bgr)
                       if _ICONS_ENABLED and not captcha_boxes else [])
-        boxes = self._merge(captcha_boxes, text_boxes, icon_boxes)
+        boxes = self._merge(captcha_boxes, uia_boxes, text_boxes, icon_boxes)
         if not boxes:
             return {}
         # Reading order: top-to-bottom, then left-to-right, bucketed into ~24px

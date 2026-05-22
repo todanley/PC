@@ -61,6 +61,11 @@ def _launch_chrome(profile_dir: str, url: str) -> subprocess.Popen | None:
     args = [chrome]
     if profile_dir:
         args.append(f"--profile-directory={profile_dir}")
+    # Build Chrome's full renderer accessibility tree eagerly so the SoM UIA
+    # source (PHANTOM_SOM_UIA) sees page elements from turn 1, instead of a
+    # thin browser-chrome-only tree that fills in a turn or two later.
+    # Harness-only — a reason this isn't baked into the shipped app yet.
+    args.append("--force-renderer-accessibility")
     args.append("--new-window")
     if url:
         args.append(url)
@@ -116,6 +121,10 @@ def main() -> int:
         "PHANTOM_LOG_TO_STDERR": "1",
         "PHANTOM_TURN_DUMP": str(turns),
         "PHANTOM_MAX_STEPS": str(args.max_steps),
+        # SoM UI Automation element source (app/uia_win.py) — on by default in
+        # the harness; set PHANTOM_SOM_UIA=0 in the environment for an A/B
+        # baseline run without it.
+        "PHANTOM_SOM_UIA": os.environ.get("PHANTOM_SOM_UIA", "1"),
         "PYTHONUNBUFFERED": "1",
         "PYTHONIOENCODING": "utf-8",
     })

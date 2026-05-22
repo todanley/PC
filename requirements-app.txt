@@ -19,3 +19,9 @@ pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
 
 # Windows-only: pywin32 backs pyautogui's keyboard/clipboard primitives.
 pywin32>=306; sys_platform == "win32"
+
+# Windows-only: comtypes drives the UI Automation (accessibility) element
+# source for SoM — opt-in via PHANTOM_SOM_UIA=1 (app/uia_win.py). Reads
+# Chrome's a11y tree at the OS level (detection-free). DEV/HARNESS ONLY for
+# now — NOT yet wired into the PyInstaller bundle (COM gen hidden-imports TBD).
+comtypes>=1.2.0; sys_platform == "win32"
