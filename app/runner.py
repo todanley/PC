@@ -96,6 +96,27 @@ def _scroll_was_noop(before_path: str, after_path: str,
     return mean < diff_threshold
 
 
+def _frame_sig(path: str):
+    """64-bit average-hash of a screenshot, for loop detection: downscale to
+    8x8 grayscale, bit = pixel brighter than the frame mean. The Hamming
+    distance between two sigs measures how different two screens look. None on
+    failure (loop detection is then skipped — never load-bearing)."""
+    try:
+        a = np.asarray(Image.open(path).convert("L").resize((8, 8)),
+                       dtype=np.float32)
+    except Exception:
+        return None
+    m = float(a.mean())
+    bits = 0
+    for v in a.flatten():
+        bits = (bits << 1) | (1 if v > m else 0)
+    return bits
+
+
+def _sig_hamming(a: int, b: int) -> int:
+    return bin(a ^ b).count("1")
+
+
 def _find_avfoundation_screen_index() -> str | None:
     """Return the avfoundation video-device index for `Capture screen 0`,
     or None if ffmpeg/the device can't be found. Indices vary per machine
@@ -163,6 +184,16 @@ _POST_ACTION_DELAY_S = 1.0
 # piece/gap/handle are big enough to detect + drag reliably. Each tick is one
 # Chrome zoom step (100→110→125→150→175→200…); ~5 ≈ 175-200%.
 _CAPTCHA_ZOOM_STEPS = 5
+# Loop-breaker: if the same screen recurs many times the agent is stuck (e.g.
+# Douyin's video-grid trap — open list → mis-click a video → close → repeat).
+# On detection we press Escape (closes the video player / popups) and steer the
+# model to re-orient; abort after a few recoveries so a run can't burn its whole
+# budget looping. Disable with PHANTOM_LOOPBREAK=0.
+_LOOPBREAK_ENABLED = os.environ.get("PHANTOM_LOOPBREAK", "1") != "0"
+_LOOPBREAK_WINDOW = 10   # recent frame-sigs remembered
+_LOOPBREAK_RECUR = 5     # current frame ~matches >= N of them → looping
+_LOOPBREAK_HAM = 6       # avg-hash Hamming distance counted as "same screen"
+_LOOPBREAK_ABORT = 4     # give up after this many auto-recoveries
 # Tasks that say "all / every / 所有 / 全部" implicitly traverse a list.
 # Models often declare `done` after seeing the visible top of the list
 # without verifying nothing's hidden below. The runner intercepts those
@@ -387,6 +418,12 @@ class TaskRunner(QThread):
         # between the handle estimate landing ON vs. BESIDE the button. Reset
         # zoom when the captcha clears. (Tracked across turns.)
         captcha_zoom_applied = False
+        # Loop-breaker state: recent screen avg-hashes, the step of the last
+        # auto-recovery, and a count of CONSECUTIVE rapid recoveries (reset when
+        # recoveries are spread out — i.e. real progress happened between).
+        recent_sigs: list[int] = []
+        consec_breaks = 0
+        last_break_step = -99
         while True:
             step += 1
             if max_steps and step > max_steps:
@@ -487,6 +524,55 @@ class TaskRunner(QThread):
                     except Exception:
                         pass
                     captcha_zoom_applied = False
+
+            # Loop-breaker: if this screen has recurred many times the agent is
+            # stuck (e.g. repeatedly mis-clicking the profile video grid into a
+            # video player). Press Escape to close any video/popup and steer it
+            # to re-orient; abort if it persists. Skipped on captcha screens
+            # (Escape would dismiss the puzzle; last_captcha is current here
+            # since mark_screenshot already ran).
+            if _LOOPBREAK_ENABLED:
+                _sig = _frame_sig(shot)
+                _on_cap = (som_engine is not None
+                           and getattr(som_engine, "last_captcha", None) is not None)
+                if _sig is not None and not _on_cap:
+                    _recurs = sum(1 for h in recent_sigs
+                                  if _sig_hamming(h, _sig) <= _LOOPBREAK_HAM)
+                    recent_sigs.append(_sig)
+                    if len(recent_sigs) > _LOOPBREAK_WINDOW:
+                        recent_sigs.pop(0)
+                    if _recurs >= _LOOPBREAK_RECUR:
+                        # Count consecutive RAPID recoveries; reset if the last
+                        # one was a while ago (the agent recovered + progressed).
+                        if step - last_break_step <= 5:
+                            consec_breaks += 1
+                        else:
+                            consec_breaks = 1
+                        last_break_step = step
+                        if consec_breaks > _LOOPBREAK_ABORT:
+                            self.failed.emit(
+                                "stuck in a repeating-screen loop (e.g. the "
+                                "video-grid trap) — aborting after repeated "
+                                "auto-recovery that isn't helping")
+                            return
+                        try:
+                            inp.press_combo("escape")
+                            time.sleep(0.4)
+                        except Exception:
+                            pass
+                        recent_sigs.clear()
+                        self.step_started.emit(
+                            step, f"Step {step}: loop detected → Escape + re-orient")
+                        pending_feedback = (
+                            "⚠️ STUCK: the same screen has recurred several times "
+                            "— you are looping (likely mis-clicking your profile's "
+                            "video grid into a video player). I pressed Escape to "
+                            "close any open video/popup. Re-orient with a DIFFERENT "
+                            "approach than the last action: click 我的 in the left "
+                            "sidebar to load your profile at the TOP, then click the "
+                            "VISIBLE 关注 count to reopen the following list. Resume "
+                            "from your checked list; do NOT repeat what looped.")
+                        continue
 
             self.step_started.emit(step, f"Step {step}: asking Claude…")
             try:
