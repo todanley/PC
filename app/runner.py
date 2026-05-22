@@ -421,9 +421,8 @@ class TaskRunner(QThread):
             # like Douyin's video action rail. BUT if the PREVIOUS action was a
             # click, the cursor is sitting on something the model just opened —
             # moving it to center fires a mouse-leave that CLOSES a
-            # hover-dismissed dropdown it just opened (e.g. Douyin's ⋯ → 拉黑
-            # menu, which vanished the instant the cursor recentred). In that
-            # case keep the cursor on the last click point so the menu stays up.
+            # hover-dismissed dropdown/menu it just opened. In that case keep
+            # the cursor on the last click point so the menu stays up.
             if step > 1:
                 park_xy = (self._scroll_default_x, self._scroll_default_y)
                 if last_action_type in ("click", "double_click") and last_click_xy is not None:
