@@ -194,14 +194,20 @@ use the 关注 item in the left sidebar — that opens the following FEED
    and do NOT click the browser toolbar (top edge, blocked). To return, **CLOSE
    the profile tab** with `key: ctrl+w`.
    ⚠️ AFTER YOU RETURN, THE FOLLOWING-LIST MODAL IS USUALLY **CLOSED** (acting
-   on an account — especially blocking/unfollowing — dismisses it). So before
-   clicking the next account you MUST first **re-open the list**: click **我的**
-   then the **关注 count**, and confirm the roster (rows of accounts with
-   已关注 / 相互关注 buttons) is actually visible. Do NOT click an account-avatar
-   position unless that roster is clearly on screen — if the modal is closed,
-   that spot is your own profile's video grid and the click opens a **full-
-   screen video player** (a single video with a like/comment/收藏 rail down the
-   right side) and you get stuck "scrolling videos."
+   on an account — especially blocking/unfollowing — dismisses it). To re-open
+   it RELIABLY, ALWAYS do TWO steps in order: (1) click **我的** in the LEFT
+   SIDEBAR — this jumps to the TOP of your own profile where the header lives;
+   (2) THEN click the **关注 N** count in that header. Only click the 关注 count
+   when you can actually SEE the "关注 N" number on screen. Confirm the roster
+   (rows with 已关注 / 相互关注 buttons) appears before clicking any account.
+   ⚠️ Your own profile has a VIDEO GRID (作品) below the header. If you click in
+   that grid — or click a remembered "关注 count" position while the profile is
+   scrolled down so the header/count is NOT visible — you open a **full-screen
+   video player** (single video + right-side like/comment/收藏 rail). NEVER
+   click where you only *assume* the count is; if you don't see "关注 N", click
+   **我的** again to return to the top first. If you open a video player TWICE
+   in a row you are mis-aiming at the grid — STOP, click **我的**, and only then
+   click the visible 关注 count.
    ⚠️ IF YOU LAND IN A FULL-SCREEN VIDEO PLAYER (single video + right-side
    like/comment rail), you mis-clicked: close it (the **✕** at the top-left, or
    `key: ctrl+w` if it opened a tab) and re-open the following list — do NOT
