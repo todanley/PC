@@ -125,15 +125,13 @@ class Input:
         hover = humanize.pre_click_hover_s()
         if hover > 0:
             time.sleep(hover)
-        # Two separate down-up pairs, each with their own dwell, separated
-        # by a small inter-click gap (real double-clicks: ~50-120 ms apart).
-        for _ in range(2):
-            pyautogui.mouseDown()
-            dwell = humanize.click_dwell_s()
-            if dwell > 0:
-                time.sleep(dwell)
-            pyautogui.mouseUp()
-            time.sleep(0.05 + 0.07 * (humanize.ENABLED and __import__("random").random()))
+        # A double-click must be FAST: both clicks within the OS double-click
+        # time (GetDoubleClickTime, ~500 ms) AND within a few px of each other,
+        # or Windows degrades it to two single clicks — which only SELECTS a
+        # desktop icon instead of LAUNCHING it. The old humanized two-dwell
+        # sequence routinely overran that window. Use the native double-click
+        # (the humanized approach/hover above still makes the motion organic).
+        pyautogui.doubleClick()
 
     def type_text(self, text: str):
         """Type ASCII text key-by-key with log-normal inter-key delays,
