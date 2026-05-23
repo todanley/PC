@@ -243,10 +243,11 @@ class SetOfMarkEngine:
         return self._uia_geom
 
     def _detect_uia(self) -> list:
-        """Interactive elements of the focused Chrome window, read via Windows
-        UI Automation (the accessibility tree). Boxes come back in
-        screenshot-pixel space. Windows-only; returns [] when disabled,
-        off-Windows, the dep is missing, or on any failure (never raises)."""
+        """Interactive elements of the FOREGROUND window (whatever app the task
+        is driving) plus the desktop icons, read via Windows UI Automation (the
+        accessibility tree). App-agnostic. Boxes come back in screenshot-pixel
+        space. Windows-only; returns [] when disabled, off-Windows, the dep is
+        missing, or on any failure (never raises)."""
         if not _UIA_ENABLED or sys.platform != "win32":
             return []
         try:
@@ -255,7 +256,7 @@ class SetOfMarkEngine:
             return []
         try:
             origin, size = self._uia_origin_and_size()
-            rects = uia_win.collect_chrome_elements(
+            rects = uia_win.collect_foreground_elements(
                 max_elements=_UIA_MAX,
                 time_budget_s=_UIA_BUDGET_S,
                 max_depth=_UIA_MAX_DEPTH,
