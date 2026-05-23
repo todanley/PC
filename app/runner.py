@@ -904,16 +904,13 @@ class TaskRunner(QThread):
                 # gets the bucket-suppressor protection back.
                 last_click_was_noop = False
 
-            # Scroll-effect verification + auto-retry. A scroll that doesn't
-            # change the screen almost always means the wheel event went to
-            # a region that doesn't accept it (e.g. screen center while a
-            # modal is open elsewhere). Before bothering the model with
-            # feedback, the runner tries up to a few smart fallback
-            # positions — last-click-xy, then right-half-center, then
-            # left-half-center. If ANY of those lands a real scroll, the
-            # model sees the scrolled screen next turn and never knows the
-            # first attempt missed. Only after every fallback fails do we
-            # forward feedback so the model can pick a smarter spot.
+            # Scroll-effect verification. A scroll that doesn't change the
+            # screen usually means the wheel event went to a region that
+            # doesn't accept it. We DETECT that (one verify capture, no cursor
+            # movement) and tell the model to re-aim its own scroll. We do NOT
+            # auto-retry at other points — the old version re-scrolled across
+            # right-half / left-half / upper-center, which jerked the mouse
+            # around the screen after every missed scroll and looked erratic.
             if action.get("action") == "scroll":
                 verify_path = os.path.join(self._tmpdir,
                                            f"verify_{step:02d}.png")
@@ -922,91 +919,49 @@ class TaskRunner(QThread):
                 except Exception:
                     verify_path = None
                 if verify_path and _scroll_was_noop(shot, verify_path):
-                    direction = action.get("direction", "down")
-                    # Build retry candidates, deduped.
-                    candidates: list[tuple[float, float]] = []
-                    seen: set[tuple[int, int]] = set()
-                    def _add(c):
-                        key = (round(c[0]), round(c[1]))
-                        if key not in seen:
-                            seen.add(key); candidates.append(c)
-                    if last_click_xy is not None:
-                        _add(last_click_xy)
-                    _add((sw * 0.78, sh * 0.50))   # right-half center
-                    _add((sw * 0.22, sh * 0.50))   # left-half center
-                    _add((sw * 0.50, sh * 0.30))   # upper-center
-                    succeeded = False
-                    for rx, ry in candidates:
-                        try:
-                            inp.scroll(direction, x=rx, y=ry)
-                        except Exception:
-                            continue
-                        time.sleep(_POST_ACTION_DELAY_S)
-                        try:
-                            screen.capture(verify_path)
-                        except Exception:
-                            continue
-                        if not _scroll_was_noop(shot, verify_path):
-                            succeeded = True
-                            break
-                    if not succeeded:
-                        used_xy = (action.get("scroll_x") is not None
-                                   and action.get("scroll_y") is not None)
-                        pending_feedback = (
-                            "Your scroll AND the runner's automatic "
-                            "fallback retries (last-click point, "
-                            "right-half center, left-half center, "
-                            "upper-center) all produced NO visible "
-                            "screen change. "
-                            + ("scroll_x/scroll_y were set but the wheel "
-                               "still didn't reach a scrollable element. "
-                               if used_xy else
-                               "You did not pass scroll_x/scroll_y. ")
-                            + "Either (a) the visible list really is at "
-                              "its end, or (b) the scrollable element is "
-                              "somewhere the runner's heuristics didn't "
-                              "guess. If you still believe more content "
-                              "exists, RE-ISSUE scroll with scroll_x/y "
-                              "pointing at a DIFFERENT spot — pick by "
-                              "looking at the screenshot for where the "
-                              "scrollbar / list rows live. Otherwise "
-                              "treat the list as fully processed."
-                        )
+                    # NO cursor-cycling retry here. The old version re-scrolled
+                    # at up to four different screen points (right-half,
+                    # left-half, upper-center …), which yanked the mouse all
+                    # over after a scroll and looked erratic. Just detect the
+                    # no-op and let the model re-aim its own scroll next turn.
+                    used_xy = (action.get("scroll_x") is not None
+                               and action.get("scroll_y") is not None)
+                    pending_feedback = (
+                        "Your scroll produced NO visible screen change. "
+                        + ("scroll_x/scroll_y were set but the wheel didn't "
+                           "reach a scrollable element. "
+                           if used_xy else
+                           "You did not pass scroll_x/scroll_y. ")
+                        + "Either the list is at its end, or the scrollable "
+                          "area is elsewhere. If more content exists, RE-ISSUE "
+                          "scroll with scroll_x/scroll_y pointing at a DIFFERENT "
+                          "spot (look at the screenshot for the scrollbar / list "
+                          "rows). Otherwise treat the list as fully processed."
+                    )
 
     def _verify_done_by_scroll(self, screen: Screen, inp: Input,
                                before_path: str, step: int,
                                last_click_xy: tuple[float, float] | None,
                                sw: int, sh: int) -> bool:
-        """Try scrolling at several smart positions to see if the screen
-        actually has more content than what's currently visible. Returns
-        True iff one of the candidate scrolls moved the screen — meaning
-        the model's `done` was premature and there's more to process."""
+        """Scroll ONCE at a single sensible point to check whether a `done` is
+        premature (more content below). Returns True iff the screen moved.
+
+        Single point on purpose: the old version cycled the cursor through
+        4-5 positions, which looked like the mouse darting around the screen.
+        We anchor on the last click (where the list/modal is) or fall back to
+        screen-centre — one move, not a sweep."""
         verify_path = os.path.join(self._tmpdir, f"verify_done_{step:02d}.png")
-        candidates: list[tuple[float, float]] = []
-        seen: set[tuple[int, int]] = set()
-        def _add(c):
-            key = (round(c[0]), round(c[1]))
-            if key not in seen:
-                seen.add(key); candidates.append(c)
-        if last_click_xy is not None:
-            _add(last_click_xy)
-        _add((sw * 0.78, sh * 0.50))   # right-half center
-        _add((sw * 0.22, sh * 0.50))   # left-half center
-        _add((sw * 0.50, sh * 0.50))   # geometric center
-        _add((sw * 0.50, sh * 0.30))   # upper-center (popovers)
-        for cx, cy in candidates:
-            try:
-                inp.scroll("down", x=cx, y=cy)
-            except Exception:
-                continue
-            time.sleep(_POST_ACTION_DELAY_S)
-            try:
-                screen.capture(verify_path)
-            except Exception:
-                continue
-            if not _scroll_was_noop(before_path, verify_path):
-                return True
-        return False
+        cx, cy = last_click_xy if last_click_xy is not None else (sw * 0.5, sh * 0.5)
+        try:
+            inp.scroll("down", x=cx, y=cy)
+        except Exception:
+            return False
+        time.sleep(_POST_ACTION_DELAY_S)
+        try:
+            screen.capture(verify_path)
+        except Exception:
+            return False
+        return not _scroll_was_noop(before_path, verify_path)
 
     def _dispatch(self, inp: Input, action: dict,
                   scroll_fallback: tuple[float, float] | None = None):
