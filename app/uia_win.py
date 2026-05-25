@@ -117,6 +117,21 @@ def collect_foreground_elements(*, max_elements=90, time_budget_s=1.0,
             cond = uia.CreateOrCondition(
                 cond, uia.CreatePropertyCondition(
                     mod.UIA_ControlTypePropertyId, t))
+        # ALSO mark anything that's actually clickable regardless of control
+        # type — Electron/Chromium render clickable text & divs as Text/Group
+        # controls that expose an Invoke (or Toggle/SelectionItem) pattern but
+        # AREN'T in the control-type whitelist (e.g. Douyin's header "关注 50"
+        # count is two invokable Text controls). Without this they go unmarked.
+        for _pat in ("UIA_IsInvokePatternAvailablePropertyId",
+                     "UIA_IsTogglePatternAvailablePropertyId",
+                     "UIA_IsSelectionItemPatternAvailablePropertyId"):
+            _pid = getattr(mod, _pat, None)
+            if _pid is not None:
+                try:
+                    cond = uia.CreateOrCondition(
+                        cond, uia.CreatePropertyCondition(int(_pid), True))
+                except Exception:
+                    pass
 
         ox, oy = origin_xy
         sw, sh = (screen_wh if screen_wh else (None, None))

@@ -58,12 +58,13 @@ _ICON_MAX_DENSITY = float(os.environ.get("PHANTOM_SOM_ICON_MAX_DENSITY", "0.55")
 # element (dedup OCR vs icon proposals, and near-duplicate contours).
 _DEDUP_DIST = int(os.environ.get("PHANTOM_SOM_DEDUP_PX", "22"))
 
-# UI Automation (Windows) element source: reads Chrome's accessibility tree at
-# the OS level (detection-free — invisible to page JS) for precise boxes on
-# semantic controls that OCR/icons miss (e.g. a tiny "···" more-button). Boxes
-# come back in screen coords == screenshot-pixel space. Default OFF; the dev
-# harness enables it (PHANTOM_SOM_UIA=1). Windows-only; lazy-loaded.
-_UIA_ENABLED = os.environ.get("PHANTOM_SOM_UIA", "0") == "1"
+# UI Automation (Windows) element source: reads the FOREGROUND window's +
+# desktop's accessibility tree at the OS level (detection-free — invisible to
+# page JS) for precise boxes on semantic controls that OCR/icons miss (e.g. a
+# tiny "···" more-button, or a desktop app icon to launch). Boxes come back in
+# screen coords == screenshot-pixel space. ON by default (set PHANTOM_SOM_UIA=0
+# to disable). Windows-only; lazy-loaded; degrades to [] if comtypes absent.
+_UIA_ENABLED = os.environ.get("PHANTOM_SOM_UIA", "1") == "1"
 _UIA_MAX = int(os.environ.get("PHANTOM_SOM_UIA_MAX", "80"))
 _UIA_BUDGET_S = float(os.environ.get("PHANTOM_SOM_UIA_BUDGET", "1.0"))
 _UIA_MAX_DEPTH = int(os.environ.get("PHANTOM_SOM_UIA_DEPTH", "25"))

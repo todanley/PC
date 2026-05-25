@@ -24,7 +24,13 @@ block_cipher = None
 # pulling datas + binaries + hiddenimports. Guarded so a checkout without the
 # OCR deps installed still builds (SoM just stays unavailable at runtime).
 SOM_DATAS, SOM_BINARIES, SOM_HIDDEN = [], [], []
-for _pkg in ("rapidocr_onnxruntime", "onnxruntime"):
+_SOM_PKGS = ["rapidocr_onnxruntime", "onnxruntime"]
+# comtypes (Windows only): backs the UIA element source (PHANTOM_SOM_UIA,
+# app/uia_win.py). collect_all so the COM type-lib generation machinery ships;
+# comtypes writes its generated wrappers to a temp dir when frozen.
+if IS_WIN:
+    _SOM_PKGS.append("comtypes")
+for _pkg in _SOM_PKGS:
     try:
         _d, _b, _h = collect_all(_pkg)
         SOM_DATAS += _d
