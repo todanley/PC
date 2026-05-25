@@ -35,10 +35,68 @@ _INTERACTIVE_TYPE_NAMES = (
 )
 
 
+# Win11 shell surfaces (Start menu, Search) are overlays owned by these
+# processes; GetForegroundWindow() doesn't return them, so we find them by
+# owning process and read them explicitly.
+_SHELL_SURFACE_PROCS = ("startmenuexperiencehost.exe", "searchhost.exe",
+                        "searchapp.exe")
+
+
+def _proc_name(hwnd) -> str:
+    """Lowercased exe name owning hwnd, '' on failure. ctypes-only (no extra
+    pywin32 dep) using PROCESS_QUERY_LIMITED_INFORMATION (no elevation)."""
+    try:
+        import ctypes
+        pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid.value)
+        if not h:
+            return ""
+        try:
+            buf = ctypes.create_unicode_buffer(512)
+            size = ctypes.c_ulong(512)
+            if ctypes.windll.kernel32.QueryFullProcessImageNameW(
+                    h, 0, buf, ctypes.byref(size)):
+                return buf.value.rsplit("\\", 1)[-1].lower()
+        finally:
+            ctypes.windll.kernel32.CloseHandle(h)
+    except Exception:
+        pass
+    return ""
+
+
+def _shell_surface_hwnds(win32gui):
+    """Visible Start-menu / Search overlay windows (Win11), found by owning
+    process — GetForegroundWindow() won't surface them, so their items
+    (Recent apps incl. a tiny '抖音', pinned tiles, the search box) otherwise
+    go unmarked."""
+    out = []
+
+    def cb(h, _):
+        try:
+            if not win32gui.IsWindowVisible(h):
+                return True
+            l, t, r, b = win32gui.GetWindowRect(h)
+            if (r - l) < 200 or (b - t) < 200:   # skip tiny/hidden surfaces
+                return True
+            if _proc_name(h) in _SHELL_SURFACE_PROCS:
+                out.append(h)
+        except Exception:
+            pass
+        return True
+
+    try:
+        win32gui.EnumWindows(cb, None)
+    except Exception:
+        pass
+    return out
+
+
 def _foreground_hwnds(win32gui):
-    """Windows to read, most-relevant first: the foreground window, plus the
-    desktop icon list (so the agent can launch an app by double-clicking its
-    desktop icon). Empty list if nothing usable."""
+    """Windows to read, most-relevant first: the foreground window, the open
+    Start-menu/Search overlay (if any), plus the desktop icon list (so the
+    agent can launch an app from Start, search, or a desktop icon). Empty list
+    if nothing usable."""
     hwnds = []
     try:
         fg = win32gui.GetForegroundWindow()
@@ -46,6 +104,11 @@ def _foreground_hwnds(win32gui):
             hwnds.append(fg)
     except Exception:
         pass
+    # Start menu / Search overlays (see _shell_surface_hwnds) — these are NOT
+    # the foreground window, so add them explicitly when open.
+    for h in _shell_surface_hwnds(win32gui):
+        if h not in hwnds:
+            hwnds.append(h)
     # Desktop icons live under Progman > SHELLDLL_DefView > SysListView32 (or,
     # when a wallpaper slideshow is active, under a WorkerW). Always include
     # them — cheap, and essential for app-launching from a bare desktop.
