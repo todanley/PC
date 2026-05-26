@@ -188,11 +188,23 @@ use the 关注 item in the left sidebar — that opens the following FEED
    runner scrolls a sensible point inside a centred modal by default.
 6. Accounts you already unfollowed stay in the list showing red 关注; skip
    them on later passes.
-7. **Opening an account's profile + getting back.** Clicking an account's
-   avatar/name opens their profile in a **NEW browser TAB**. Douyin profile
-   pages have **no on-page back arrow** — do NOT hunt for one at the top-left,
-   and do NOT click the browser toolbar (top edge, blocked). To return, **CLOSE
-   the profile tab** with `key: ctrl+w`.
+7. **Opening an account's profile + getting back.**
+   ★ **DESKTOP APP (抖音, a single window — NOT a browser):** clicking an
+   avatar opens the profile **in the same window**, and there IS a **back arrow
+   `<` at the top-left** of the content area. To return to the following list,
+   ALWAYS click that **back arrow** — it keeps the list at the SAME scroll
+   position, so you keep moving DOWN it. **Do NOT return by clicking 我的 →
+   关注 count**: in the desktop app that RE-OPENS the list at the TOP, so you
+   re-check accounts you've already done and never progress (the loop we keep
+   hitting). When the visible rows run out, **scroll DOWN within the list** to
+   reveal more, then open the next unchecked account. So the loop is: open
+   account → check gender (act if 男) → **back arrow** → (scroll if needed) →
+   next account. Stick to the back arrow every single time.
+
+   ▼ **BROWSER (douyin.com) only:** clicking an account opens their profile in a
+   **NEW browser TAB**. Douyin web profile pages have **no on-page back arrow**
+   — do NOT hunt for one, and do NOT click the browser toolbar (top edge,
+   blocked). To return, **CLOSE the profile tab** with `key: ctrl+w`.
    ⚠️ AFTER YOU RETURN, THE FOLLOWING-LIST MODAL IS USUALLY **CLOSED** (acting
    on an account — especially blocking/unfollowing — dismisses it). To re-open
    it RELIABLY, ALWAYS do TWO steps in order: (1) click **我的** in the LEFT
