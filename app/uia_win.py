@@ -269,5 +269,191 @@ def collect_foreground_elements(*, max_elements=90, time_budget_s=1.0,
         return []
 
 
+def _list_region_center(hint_xy, *, origin_xy, screen_wh, time_budget_s):
+    """Infer a scrollable LIST/modal region from the cluster of interactive
+    elements around the hint, for web lists Chrome doesn't expose with a Scroll
+    pattern (a CSS-overflow modal like Douyin's follow roster). Returns a point
+    ON the list (median of the clustered rows), or None when no list-like
+    cluster sits around the hint. Never raises.
+
+    Heuristic: among interactive elements (reuse collect_foreground_elements),
+    keep row-sized ones whose horizontal centre is in the same column as the
+    hint (within HALF_COL px); require several of them spanning real vertical
+    height (a stacked list, not a lone button row). The median (x,y) of that
+    cluster lands squarely on the list, so the wheel scrolls it."""
+    HALF_COL = 520        # px each side of the hint x → "same column" as the list
+    MIN_ROWS = 4          # need a few stacked items to call it a list
+    MIN_SPAN = 120        # px of vertical extent → genuinely stacked, not a strip
+    try:
+        boxes = collect_foreground_elements(max_elements=160, origin_xy=origin_xy,
+                                            screen_wh=screen_wh,
+                                            time_budget_s=time_budget_s)
+    except Exception:
+        return None
+    if not boxes:
+        return None
+    hx, hy = hint_xy
+    sw = screen_wh[0] if screen_wh else None
+    pts = []
+    for (x0, y0, x1, y1, _name, _ct) in boxes:
+        w, h = x1 - x0, y1 - y0
+        if w < 60 or h < 8:                 # too small → a dot/icon, not a row
+            continue
+        if sw and w > 0.55 * sw:            # full-width page chrome, not a row
+            continue
+        cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+        if abs(cx - hx) <= HALF_COL:        # same column as the hint
+            pts.append((cx, cy))
+    if len(pts) < MIN_ROWS:
+        return None
+    ys = sorted(p[1] for p in pts)
+    if ys[-1] - ys[0] < MIN_SPAN:
+        return None
+    xs = sorted(p[0] for p in pts)
+    return (xs[len(xs) // 2], ys[len(ys) // 2])   # median x, median y → on list
+
+
+def find_scroll_target(hint_xy=None, *, origin_xy=None, screen_wh=None,
+                       time_budget_s=1.0):
+    """Center of the scrollable container the wheel should target, in
+    SCREENSHOT-pixel space, or None on any failure (caller keeps its own
+    target). Never raises.
+
+    A mouse wheel only scrolls the element under the cursor. A web following
+    list (and most modals) scrolls ONLY when the cursor sits over its
+    scrollable rows — not the modal's header/padding, and not the dimmed page
+    backdrop around it. The model merely *guesses* that point, so it drifts
+    onto a non-scrolling zone and the wheel no-ops → the list never advances.
+    This reads the OS accessibility tree for elements that actually expose a
+    vertical Scroll pattern and returns a point guaranteed to be inside one,
+    so the runner can aim the wheel deterministically.
+
+    `hint_xy` (the model's intended scroll point / last click, screenshot px)
+    disambiguates WHICH scrollable when several exist (a modal list sitting on
+    top of the scrollable page document): the innermost Scroll-pattern container
+    that CONTAINS the hint wins (the modal list, not the page behind it). When
+    NOTHING with a Scroll pattern contains the hint — the common web case, where
+    a modal's list is a CSS-overflow div Chrome doesn't expose as scrollable —
+    we do NOT jump to a far-away scrollable (that's worse than the guess);
+    instead we infer the list region from the cluster of interactive row
+    elements around the hint (`_list_region_center`). With no hint at all, the
+    largest scrollable (usually the page). Returned point is a CENTER — one
+    stable spot, so the cursor doesn't dart around like the old multi-point
+    retry. None ⇒ caller keeps its own target.
+    """
+    deadline = time.monotonic() + max(0.1, float(time_budget_s))
+    try:
+        import comtypes
+        import comtypes.client
+        import win32gui
+    except Exception:
+        return None
+
+    try:
+        comtypes.CoInitializeEx(comtypes.COINIT_MULTITHREADED)
+    except Exception:
+        pass
+
+    # Resolve screenshot-space origin/size from the primary monitor unless the
+    # caller passed them (matches som.py's _uia_origin_and_size convention).
+    if origin_xy is None or screen_wh is None:
+        try:
+            import mss
+            with mss.mss() as sct:
+                m = sct.monitors[1]
+            if origin_xy is None:
+                origin_xy = (int(m["left"]), int(m["top"]))
+            if screen_wh is None:
+                screen_wh = (int(m["width"]), int(m["height"]))
+        except Exception:
+            if origin_xy is None:
+                origin_xy = (0, 0)
+    ox, oy = origin_xy
+    sw, sh = (screen_wh if screen_wh else (None, None))
+
+    try:
+        fg = win32gui.GetForegroundWindow()
+        if not fg or not win32gui.IsWindowVisible(fg):
+            return None
+        mod = comtypes.client.GetModule("UIAutomationCore.dll")
+        uia = comtypes.client.CreateObject(mod.CUIAutomation,
+                                           interface=mod.IUIAutomation)
+        root = uia.ElementFromHandle(fg)
+        if not root:
+            return None
+
+        scroll_pid = getattr(mod, "UIA_IsScrollPatternAvailablePropertyId", None)
+        if scroll_pid is None:
+            return None
+        # One native call for everything exposing a Scroll pattern.
+        try:
+            arr = root.FindAll(mod.TreeScope_Descendants,
+                               uia.CreatePropertyCondition(int(scroll_pid), True))
+        except Exception:
+            arr = None
+
+        cands = []  # (area, cx, cy, x0, y0, x1, y1)
+        for i in range(arr.Length if arr else 0):
+            if time.monotonic() > deadline:
+                break
+            try:
+                el = arr.GetElement(i)
+                if el.CurrentIsOffscreen:
+                    continue
+                # Must be VERTICALLY scrollable — skip purely-horizontal
+                # scrollers (e.g. a thumbnail strip) the wheel can't drive.
+                try:
+                    pat = el.GetCurrentPattern(mod.UIA_ScrollPatternId)
+                    sp = pat.QueryInterface(mod.IUIAutomationScrollPattern)
+                    if not sp.CurrentVerticallyScrollable:
+                        continue
+                except Exception:
+                    continue
+                r = el.CurrentBoundingRectangle  # screen px
+                x0, y0 = int(r.left) - ox, int(r.top) - oy
+                x1, y1 = int(r.right) - ox, int(r.bottom) - oy
+                if x1 <= x0 or y1 <= y0:
+                    continue
+                if sw is not None:
+                    if x1 <= 0 or y1 <= 0 or x0 >= sw or y0 >= sh:
+                        continue
+                    x0 = max(0, min(x0, sw - 1)); x1 = max(1, min(x1, sw))
+                    y0 = max(0, min(y0, sh - 1)); y1 = max(1, min(y1, sh))
+                cands.append(((x1 - x0) * (y1 - y0),
+                              (x0 + x1) // 2, (y0 + y1) // 2,
+                              x0, y0, x1, y1))
+            except Exception:
+                continue
+
+        if hint_xy is not None:
+            hx, hy = hint_xy
+            # Pass 1: a real Scroll-pattern container that CONTAINS the hint —
+            # the innermost wins (the modal list, not the page document behind
+            # it). This is the precise, trustworthy case.
+            containing = [c for c in cands
+                          if c[3] <= hx <= c[5] and c[4] <= hy <= c[6]]
+            if containing:
+                c = min(containing, key=lambda c: c[0])  # innermost
+                return (c[1], c[2])
+            # Pass 2: many web lists/modals (e.g. Douyin's follow roster) scroll
+            # via a CSS-overflow div that Chrome does NOT expose with a Scroll
+            # pattern, so Pass 1 finds nothing around the hint. Do NOT fall back
+            # to a far-away scrollable (e.g. the left nav sidebar) — that's
+            # strictly WORSE than the model's own guess. Instead infer the list
+            # region from the cluster of interactive ROW elements around the
+            # hint (those ARE in the tree) and scroll its center.
+            remaining = max(0.15, deadline - time.monotonic())
+            return _list_region_center(hint_xy, origin_xy=(ox, oy),
+                                       screen_wh=screen_wh,
+                                       time_budget_s=remaining)
+        # No hint: the largest scrollable (usually the page), if any.
+        if cands:
+            c = max(cands, key=lambda c: c[0])
+            return (c[1], c[2])
+        return None
+    except Exception:
+        return None
+
+
 # Backwards-compatible alias (older callers / docs referenced the Chrome name).
 collect_chrome_elements = collect_foreground_elements

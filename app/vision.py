@@ -81,7 +81,11 @@ def _provider() -> str:
 
 PROVIDER = _provider()
 API_URL = {
-    "moonshot": "https://api.moonshot.ai/v1/chat/completions",
+    # PHANTOM_MOONSHOT_URL env override — needed when the key is from the
+    # platform.moonshot.cn console (Chinese platform) instead of the default
+    # international .ai. Same /v1/chat/completions schema either way.
+    "moonshot": os.environ.get("PHANTOM_MOONSHOT_URL",
+                               "https://api.moonshot.ai/v1/chat/completions"),
     "google":   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
 }.get(PROVIDER, "https://api.anthropic.com/v1/messages")
 # CN-bridge support: in a CN-ship build, point at the baked bridge URL.
@@ -117,7 +121,19 @@ GLOBAL HARD RULES:
 
 PROGRESS FIELD: every reply MUST include a `progress` string — your one-line running checklist. The runner echoes the most recent value back to you next turn, so it's your only persistent memory. If `progress` says you finished step X, don't redo it. Keep `progress` factual and based on what your action ACTUALLY changed (verifiable from the next screenshot), not what you intended.
 
+BATCH / LIST TASKS — PERSISTENT DONE-LIST (for any "all / every / 所有 / 全部 …" job over a list — block all males, like every video, unfollow everyone, …): you handle items ONE AT A TIME. The INSTANT you finish one item — its final action is taken (blocked / skipped / liked / unfollowed / …) — set `done_item` to that item's UNIQUE identifier plus the outcome, e.g. "方一 — female, skipped" or "水豚噜噜 — male, blacklisted". The runner PERMANENTLY remembers every `done_item` you report and lists them all back to you each turn under "✅ ALREADY PROCESSED". This is the cure for losing your place: lists scroll back to the top, reload, or get reset by a captcha — the done-list does NOT. HARD RULES:
+▸ NEVER re-process an item already on the done-list — even if the list jumped back to the top. Recognise it by its identifier (the username/title) and skip it.
+▸ Each turn, act on the next item whose identifier is NOT on the done-list. If EVERY visible item is already done, SCROLL to reveal new ones (don't re-open profiles you've handled).
+▸ Report `done_item` exactly once per item, on the turn you complete it. Use the same identifier text you can read on screen so you can match it later.
+▸ Declare `done` only when every item is on the done-list AND scrolling reveals nothing new.
+
 CLICK VERIFICATION (HARD): the runner also pixel-compares a small region around your click point before vs. after each click. If that region is unchanged, the runner injects a `[Runner feedback] Your click at (x, y) had NO visible effect…` line into the next turn. When you see that feedback, you DID NOT actually trigger anything — DO NOT increment any progress counter, DO NOT pretend it succeeded. Treat the failed click as a missed target and re-localize on the new screenshot at a DIFFERENT coordinate (usually the real button is offset by a few tens of pixels).
+
+READING SMALL VISUAL TAGS (gender, badges, status pills, verified marks): when the task makes you act DIFFERENTLY based on a small icon or coloured badge on a profile/card (most commonly a GENDER symbol), do NOT classify it from a glance. In your reasoning, first state the EXACT COLOUR and SHAPE you can see in the pixels, THEN map to a meaning. For gender icons on Chinese social apps (douyin / 小红书 / weibo / …) the convention is fixed:
+  ▸ PINK / RED Venus glyph (circle with a CROSS hanging BELOW) ⇒ ♀ FEMALE
+  ▸ BLUE Mars glyph (circle with an ARROW pointing UPPER-RIGHT) ⇒ ♂ MALE
+  ▸ Bio strip shows only 抖音号 / IP属地 / "X岁" with NO coloured circular gender glyph at all ⇒ NO TAG SET. The "X岁" age badge ALONE is NOT a gender symbol — age is genderless.
+If you cannot be CERTAIN about BOTH the colour (pink vs blue) AND the shape (cross-below vs arrow-up-right), treat it as NO TAG and SKIP per any "if not set, don't act" rule in the task. Do NOT guess "male" just because the task asks you to block males — a wrong block on the wrong gender is a real harmful action the user has to manually undo. When in doubt, skip.
 
 TOGGLE-BUTTON RULE (any like / follow / save / subscribe / mute, etc.): a single click flips state; clicking again undoes it. After clicking a toggle, your NEXT action must move on (scroll, key, navigate, done). Use the visible numeric count (e.g. like-count) as proof: read it before clicking, store as `last_count` in progress, compare next turn.
 - If the count changed by 1 → toggle landed → MOVE ON. Don't re-click.
@@ -128,7 +144,7 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 {{
   "action": "click" | "double_click" | "type" | "key" | "scroll" | "drag" | "slide_captcha" | "wait" | "done",
-  "mark": <int>,                    // (SoM mode only) id of a magenta-tagged element to act on; preferred over x/y for click/double_click/type when the target is tagged
+  "mark": <int>,                    // (SoM mode) id of the magenta-tagged element to act on. REQUIRED for click/double_click/type whenever the target has a tag. If you also emit x/y, the runner USES the mark and DISCARDS your x/y — do not try to override.
   "piece_mark": <int>, "gap_mark": <int>, // for slide_captcha ONLY: the mark on the puzzle PIECE and the mark on the matching GAP/shadow. The runner drags the slider handle by the exact piece→gap distance.
   "x": <num>, "y": <num>,           // for click / double_click
   "text": "<string>",               // for type
@@ -137,7 +153,8 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
   "scroll_x": <num>, "scroll_y": <num>, // OPTIONAL and usually OMIT. Leave them out for normal page scrolls AND for centered modals/popovers — the runner auto-targets a sensible point near screen-center that lands inside a centered overlay. Only set them when the scrollable area is clearly OFF-center (e.g. a narrow left sidebar or a right-docked panel), and then use the SAME coordinate convention as click x/y.
   "x1": <num>, "y1": <num>, "x2": <num>, "y2": <num>, // for drag: press at (x1,y1), drag to (x2,y2), release. Use for slider CAPTCHAs, range-sliders, drag-and-drop. Same coord convention as click x/y.
   "reasoning": "<one short sentence on why this single action>",
-  "progress": "<running checklist of what's been completed and what's left>"
+  "progress": "<running checklist of what's been completed and what's left>",
+  "done_item": "<unique id — outcome>"  // OPTIONAL — set ONLY on the turn you finish ONE item of a batch/list task (see DONE-LIST). The runner remembers it permanently and echoes the full list back so you never redo one.
 }}
 
 Action notes:
@@ -149,14 +166,14 @@ Action notes:
 
 
 # Injected into the system prompt only when SoM (Set-of-Mark) is active.
-# Tells the model to prefer picking a numbered tag over regressing pixel
-# coordinates — the runner resolves the tag to the element's exact center.
+# Tells the model marks are MANDATORY (not preferred) — the runner ignores any
+# x/y the model also emits when a mark is present.
 SOM_INSTRUCTIONS = """
-SET-OF-MARK TAGS: many screenshots have interactive elements outlined with a magenta box and a small numbered badge (e.g. a "3" at the box's top-left corner). These tags are the runner's element index.
-▸ When the element you want to act on is tagged, respond with `"mark": <that number>` INSTEAD of x/y. The runner resolves the tag to that element's exact center pixel — far more reliable than you estimating a coordinate.
-▸ Read the number off the magenta badge that belongs to the SPECIFIC element you mean (the avatar, the follow button, the back arrow). Don't pick the badge of a neighbouring element.
+SET-OF-MARK TAGS (MANDATORY when present): every interactive element worth acting on is outlined with a magenta box and a small numbered badge (e.g. a "3" at the box's top-left corner). These tags are the runner's element index.
+▸ ALWAYS respond with `"mark": <that number>` for `click`, `double_click`, and `type`. **DO NOT also emit `x`/`y`** — if you send both, the runner USES THE MARK and DISCARDS your x/y (you cannot override a mark with a coordinate). Pixel estimation is unreliable; the mark resolves to the element's exact bounding-box centre.
+▸ Read the number off the magenta badge that belongs to the SPECIFIC element you mean (the avatar, the follow button, the back arrow). Don't pick the badge of a neighbouring element. If two marks overlap, pick the SMALLER / more specific one (e.g. the follow "+" badge mark, not the larger avatar mark covering it).
 ▸ A `mark` works for `click`, `double_click`, and `type` (for `type`, the runner clicks the tagged field first, then types your `text`).
-▸ Only fall back to raw x/y when the exact control you need has NO tag (e.g. an untagged icon). Never snap to the nearest tag for an untagged target — give x/y instead.
+▸ x/y is a FALLBACK ONLY when the exact control you need has truly NO mark on it. If everything you can see is tagged, you must use marks — never substitute coordinates.
 
 SLIDER CAPTCHA: if the screen is a verification puzzle (a piece to slide into a matching shadow), the runner tags the puzzle PIECE and each candidate GAP/shadow with magenta marks. Identify the piece's mark and the GAP whose SHAPE matches the piece, then respond `{"action":"slide_captcha","piece_mark":<piece>,"gap_mark":<matching gap>}`. The runner computes the exact slider distance and drags the handle — you do NOT estimate coordinates or drag yourself. If the puzzle image is still blank/loading, `wait` instead.
 """
@@ -252,6 +269,25 @@ class VisionClient:
         plat, primary_mod = _platform_strings()
         self.logical_w, self.logical_h = screen_size
         self._last_progress: str = ""  # echoed back to the model each turn
+        # Durable, accumulating done-list for batch/list tasks (block-all,
+        # like-all, …). The model reports each finished item via `done_item`;
+        # we keep them all and re-inject every turn so the agent never redoes
+        # an item after the list scrolls back / reloads / a captcha resets it.
+        self._done_items: list[str] = []
+        # Optional cross-run persistence: when PHANTOM_DONELIST_FILE is set, the
+        # list is loaded on start and saved on every update, so a run that was
+        # cancelled / drained its quota can RESUME a half-finished list instead
+        # of re-checking from the top. Off by default (shipped exe doesn't set
+        # it → in-run memory only).
+        self._donelist_file: str = os.environ.get("PHANTOM_DONELIST_FILE", "")
+        if self._donelist_file:
+            try:
+                with open(self._donelist_file, encoding="utf-8") as fh:
+                    loaded = json.load(fh)
+                if isinstance(loaded, list):
+                    self._done_items = [str(x) for x in loaded if str(x).strip()]
+            except Exception:
+                pass
         # No downsampling — the screencapture is sent at its native resolution
         # so the model gets every pixel of the UI. Image dimensions equal
         # logical screen dimensions (true on 1x displays; on Retina the
@@ -314,14 +350,20 @@ class VisionClient:
     def _apply_coords(self, action: dict, mark_map: dict | None) -> None:
         """Resolve the action's target into OS-logical click coords, in-place.
 
-        If the model picked a Set-of-Mark tag and that tag is known, the
-        tag's pre-computed center (image-pixel space) wins — converted to
-        logical px via self.scale, the same factor used for raw pixel coords.
-        This BYPASSES the 0-1000 / fraction heuristics in `_to_logical_xy`,
-        which only apply to model-regressed coordinates. Otherwise fall
-        through to the normal coordinate conversion."""
+        Policy: when the model emits a `mark`, the mark is AUTHORITATIVE — any
+        x/y the model also emitted as a hedge is DISCARDED unconditionally,
+        whether the mark resolves or not. Models (e.g. Kimi) tend to emit both
+        mark + x/y "to be safe"; letting the wrong x/y win silently undoes the
+        whole point of SoM. If the mark fails to resolve (stale / invalid tag),
+        the action is turned into a soft no-op (x/y cleared) so the next turn
+        re-localises with feedback rather than clicking the model's guess.
+
+        Without a `mark`, fall through to the normal pixel-coord conversion."""
         mk = action.get("mark")
         if mk is not None and mark_map:
+            # Mark present → ALWAYS strip any hedge x/y first.
+            action.pop("x", None)
+            action.pop("y", None)
             # Accept "3", "[3]", "mark 3", "element 3", 3, etc.
             m = re.search(r"\d+", str(mk))
             key = m.group() if m else None
@@ -329,9 +371,10 @@ class VisionClient:
                 cx, cy = mark_map[key]
                 action["x"] = max(0, min(self.logical_w - 1, round(cx / self.scale)))
                 action["y"] = max(0, min(self.logical_h - 1, round(cy / self.scale)))
-                return
-            # Tag unknown / stale (layout shifted, tag not in this turn's map):
-            # drop it and fall back to any x/y the model also supplied.
+            # else: mark unknown/stale, x/y already stripped — action will
+            # soft-no-op in the runner (missing x/y for click) and the model
+            # gets a chance to re-pick next turn. Do NOT fall back to x/y.
+            return
         self._to_logical_xy(action)
 
     def _to_logical_xy(self, action: dict) -> None:
@@ -404,6 +447,44 @@ class VisionClient:
             "raise PHANTOM_JPEG_QUALITY threshold or re-introduce downsampling."
         )
 
+    @staticmethod
+    def _done_identifier(item: str) -> str:
+        """Identifier portion of a done_item string (the part before the first
+        em/en/hyphen dash), normalised for matching. 'water — male, blocked'
+        → 'water'."""
+        for sep in ("—", "–", " - "):
+            if sep in item:
+                item = item.split(sep, 1)[0]
+                break
+        return item.strip().lower()
+
+    def _record_done(self, item: str) -> None:
+        """Append a finished batch item to the durable done-list, deduped by
+        identifier so a re-reported item (model confirming twice) is ignored."""
+        item = item.strip()
+        if not item:
+            return
+        ident = self._done_identifier(item)
+        if not ident:
+            return
+        if any(self._done_identifier(d) == ident for d in self._done_items):
+            return
+        self._done_items.append(item)
+        if self._donelist_file:
+            try:
+                with open(self._donelist_file, "w", encoding="utf-8") as fh:
+                    json.dump(self._done_items, fh, ensure_ascii=False)
+            except Exception:
+                pass
+        # Harness-only trace so a review run can watch the done-list grow.
+        if os.environ.get("PHANTOM_RUN_DIR"):
+            try:
+                import sys
+                print(f"[done-list] +{item}  (total {len(self._done_items)})",
+                      file=sys.stderr, flush=True)
+            except Exception:
+                pass
+
     def next_action(self, screenshot_path: str, feedback: str | None = None,
                     mark_map: dict | None = None) -> dict:
         b64, media_type = self._encode_image(screenshot_path)
@@ -423,13 +504,29 @@ class VisionClient:
         if mark_map:
             marks_line = (
                 f"This screenshot has {len(mark_map)} interactive elements "
-                "outlined in magenta with numbered tags. Prefer "
-                '`"mark": <number>` over x/y for the element you want; use '
-                "x/y only if the exact target has no tag.\n\n"
+                "outlined in magenta with numbered tags. Use "
+                '`"mark": <number>` for every click / double_click / type — '
+                "the runner resolves marks to exact element centres and "
+                "DISCARDS any `x`/`y` you also emit. Use x/y only when the "
+                "target has truly no tag.\n\n"
+            )
+        done_line = ""
+        if self._done_items:
+            # Cap the rendered list so the prompt stays bounded on huge runs;
+            # the full set is still kept in memory for dedup.
+            shown = self._done_items[-150:]
+            elided = len(self._done_items) - len(shown)
+            head = f"(+{elided} earlier) " if elided else ""
+            items = "\n".join(f"  {i}. {d}" for i, d in enumerate(shown, 1))
+            done_line = (
+                f"✅ ALREADY PROCESSED {head}({len(self._done_items)} item(s)) — "
+                "do NOT redo any of these, even if the list reset to the top:\n"
+                f"{items}\n\n"
             )
         user_text = (
-            f"{feedback_line}{marks_line}Task: {self.task}\n\n{progress_line}"
-            "What's the next single action? Return JSON only — and remember to update `progress`."
+            f"{feedback_line}{marks_line}Task: {self.task}\n\n{progress_line}{done_line}"
+            "What's the next single action? Return JSON only — update `progress`, "
+            "and set `done_item` whenever you finish one item of a list task."
         )
         if PROVIDER == "gemini":
             # Drive gemini.google.com via the Playwright CLI tool. Each call
@@ -496,6 +593,9 @@ class VisionClient:
             prog = action.get("progress")
             if isinstance(prog, str) and prog.strip():
                 self._last_progress = prog.strip()
+            di = action.get("done_item")
+            if isinstance(di, str) and di.strip():
+                self._record_done(di)
             # No history accumulation for Gemini (fresh browser each call).
             return action
 
@@ -664,6 +764,10 @@ class VisionClient:
         prog = action.get("progress")
         if isinstance(prog, str) and prog.strip():
             self._last_progress = prog.strip()
+        # Accumulate the durable batch done-list (re-injected every turn).
+        di = action.get("done_item")
+        if isinstance(di, str) and di.strip():
+            self._record_done(di)
 
         # Record into history WITHOUT the image (token cost stays flat across
         # long tasks). OpenAI-style providers prefer plain strings for

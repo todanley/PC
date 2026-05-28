@@ -504,7 +504,13 @@ class Input:
         enough to make progress, with enough overlap that no list row is
         skipped. PHANTOM_SCROLL_STEP (detents/event) and `clicks` tune it."""
         if x is not None and y is not None:
-            _humanized_move(x, y)
+            # Jump the pointer straight to the target, NOT the humanized glide.
+            # A wheel event scrolls whatever sits under the cursor (Chrome
+            # ignores posted WM_MOUSEWHEEL — verified — so a real wheel at the
+            # cursor is the only way to drive it), so the pointer must be on the
+            # list; teleporting there makes this read as a pure wheel scroll
+            # rather than a slow drag-like motion. No mouse button is touched.
+            pyautogui.moveTo(int(x), int(y))
         sign = -1 if direction == "down" else 1
         try:
             step = int(os.environ.get("PHANTOM_SCROLL_STEP", "1") or 1)

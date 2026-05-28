@@ -77,6 +77,99 @@ def _launch_chrome(profile_dir: str, url: str) -> subprocess.Popen | None:
         return None
 
 
+def _foreground_chrome() -> None:
+    """Windows: clear the desktop and bring the stanley-profile Chrome window
+    to the foreground before the agent takes its first screenshot.
+
+    `_launch_chrome` uses `--new-window` so Chrome SHOULD foreground itself,
+    but a separate terminal / IDE window (e.g. Claude Code's TUI, which sits
+    in its own process and so is NOT covered by `_minimize_own_console`) can
+    steal focus back during the chrome-warmup OR mid-run when the user clicks
+    it. We minimise EVERYTHING first (Shell.Application.MinimizeAll), then
+    restore Chrome — so no other window is visible to steal focus when the
+    agent clicks near the Chrome edge. AttachThreadInput bypasses Windows'
+    cross-process SetForegroundWindow restriction.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import win32gui, win32con, ctypes
+    except Exception:
+        return
+    # Step 1: minimise everything (including IDE / terminals / overlays).
+    try:
+        import win32com.client
+        win32com.client.Dispatch("Shell.Application").MinimizeAll()
+        time.sleep(0.4)
+    except Exception:
+        pass
+    cands = []
+    def _cb(h, _):
+        try:
+            if win32gui.GetClassName(h) == "Chrome_WidgetWin_1":
+                t = win32gui.GetWindowText(h)
+                if t and "Google Chrome" in t:
+                    cands.append((h, t))
+        except Exception:
+            pass
+        return True
+    try:
+        win32gui.EnumWindows(_cb, None)
+    except Exception:
+        return
+    if not cands:
+        return
+    # Prefer a douyin-titled window when multiple Chrome windows exist.
+    cands.sort(key=lambda c: 0 if ("抖音" in c[1] or "douyin" in c[1].lower()) else 1)
+    hwnd = cands[0][0]
+    try:
+        # MAXIMIZE (not just RESTORE) so Chrome fills the screen and can't be
+        # accidentally covered if a small overlay re-appears mid-run.
+        win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+    except Exception:
+        pass
+    try:
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        cur = kernel32.GetCurrentThreadId()
+        fg = user32.GetForegroundWindow()
+        fg_pid = ctypes.c_ulong()
+        fg_thread = user32.GetWindowThreadProcessId(fg, ctypes.byref(fg_pid))
+        attached = False
+        if fg_thread and fg_thread != cur:
+            attached = bool(user32.AttachThreadInput(cur, fg_thread, True))
+        try:
+            user32.BringWindowToTop(hwnd)
+            user32.SetForegroundWindow(hwnd)
+        finally:
+            if attached:
+                user32.AttachThreadInput(cur, fg_thread, False)
+    except Exception:
+        pass
+
+
+def _minimize_own_console() -> None:
+    """Windows: drop THIS harness's console window out of the way before the
+    agent starts driving the screen.
+
+    The agent reads the foreground window's pixels every turn. A visible
+    console (the terminal we launched from) sits on top of the browser, so the
+    agent wastes turns trying to close it to see the page — and can even close
+    the very terminal hosting this run, killing it mid-task. Minimizing our own
+    console at startup makes the timing exact (it happens before app.main even
+    launches) and is harness-only: the shipped GUI exe has no console at all.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        if hwnd:
+            ctypes.windll.user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+    except Exception:
+        pass
+
+
 def main() -> int:
     # The agent's logs and tasks are Chinese; the Windows console defaults to
     # cp1252 and crashes on them. Force UTF-8 (replace anything unmappable).
@@ -135,11 +228,25 @@ def main() -> int:
               "another provider (GEMINI_API_KEY / ANTHROPIC_API_KEY) is configured")
 
     print(f"== launching: python -m app.main  (task: {args.task!r})")
+    # Get our console out of the way so it can't obscure (or be closed by) the
+    # browser the agent is about to drive. Do it last, right before launch.
+    _minimize_own_console()
+    # When the user explicitly opted into pre-launching Chrome via the harness
+    # (--chrome-profile / --url), also raise that Chrome window so a separate
+    # terminal/IDE window can't dominate the agent's first screenshot. When
+    # neither flag is passed (agent-driven test), do NOT touch window state —
+    # the whole point is to test the agent without harness pre-arrangement.
+    if args.chrome_profile or args.url:
+        _foreground_chrome()
     proc = subprocess.Popen(
         [sys.executable, "-m", "app.main"],
         cwd=str(ROOT), env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         bufsize=1, text=True, encoding="utf-8", errors="replace",
+        # Don't let the child spawn its own visible console window either
+        # (defense in depth; app.main is a Qt GUI and needs no console).
+        creationflags=(subprocess.CREATE_NO_WINDOW
+                       if sys.platform == "win32" else 0),
     )
 
     done = {"reason": None}

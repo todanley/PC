@@ -3,6 +3,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -72,18 +73,19 @@ def _click_was_noop(before_path: str, after_path: str,
 
 
 def _scroll_was_noop(before_path: str, after_path: str,
-                     diff_threshold: float = 4.0) -> bool:
-    """Full-image pixel-diff before vs. after a scroll. Return True when the
-    screen barely changed — a strong signal the wheel event landed on a
-    region that doesn't accept it (e.g. screen center while a modal is
-    open: the wheel goes to the page underneath, which is dimmed and
-    inert).
+                     diff_threshold: float = 4.0,
+                     region: tuple[float, float, float] | None = None) -> bool:
+    """Pixel-diff before vs. after a scroll. Return True when nothing moved —
+    a strong signal the wheel landed somewhere inert, or the list is at its end.
 
-    Threshold is set above the noise floor we see from background
-    animations on apps like Douyin (autoplaying preview thumbnails in the
-    feed area produce a mean delta of ~1-3 even when nothing the user
-    cares about changed). A real scroll moving ~50 px of list content
-    gives a much larger mean delta than that."""
+    `region=(cx, cy, half)` restricts the comparison to a box around the scroll
+    target. This is ESSENTIAL for a small modal/list on a big screen: a real
+    multi-row scroll of Douyin's follow modal moves only ~2% of the screen's
+    pixels (full-image mean ~2, indistinguishable from the ~1-3 noise floor of
+    autoplaying feed thumbnails), yet the modal region itself changes massively
+    (region mean ~16 vs 0.0 at the bottom — measured). Cropping to the target
+    also excludes that background autoplay noise entirely. Without a region we
+    fall back to the full-image mean (correct for full-page scrolls)."""
     try:
         a = Image.open(before_path).convert("RGB")
         b = Image.open(after_path).convert("RGB")
@@ -91,6 +93,13 @@ def _scroll_was_noop(before_path: str, after_path: str,
         return False
     if a.size != b.size:
         return False
+    if region is not None:
+        cx, cy, half = region
+        w, h = a.size
+        box = (max(0, int(cx - half)), max(0, int(cy - half)),
+               min(w, int(cx + half)), min(h, int(cy + half)))
+        if box[2] - box[0] >= 8 and box[3] - box[1] >= 8:
+            a = a.crop(box); b = b.crop(box)
     diff = ImageChops.difference(a, b)
     mean = float(np.asarray(diff, dtype=np.uint8).mean())
     return mean < diff_threshold
@@ -200,7 +209,13 @@ _LOOPBREAK_ABORT = 4     # give up after this many auto-recoveries
 # `done`s and forces a verifying scroll before accepting (see
 # _done_needs_scroll_verify usage below).
 _LIST_TRAVERSAL_TASK = re.compile(
-    r"(\ball\b|\bevery\b|\beach\b|所有|全部|整个|每[一个个个]?)",
+    # English: bounded word-match on "all"/"every"/"each".
+    # Chinese: 所有 / 全部 / 整个 (already specific), and 每 ONLY when followed
+    # by a measure word that turns it into "every <item>" — 每个 / 每条 / 每位
+    # / 每名 / 每一个. Bare 每 was matching things like "每关注一个" ("each time
+    # you follow one"), causing a false done-veto in capped-count tasks like
+    # "follow 10 creators".
+    r"(\ball\b|\bevery\b|\beach\b|所有|全部|整个|每(?:一个|[个条位名]))",
     re.IGNORECASE,
 )
 # Silent dispatch suppressor — see _click_bucket. Two consecutive clicks at
@@ -252,6 +267,12 @@ class TaskRunner(QThread):
         # we know screen size.
         self._scroll_default_x = 950
         self._scroll_default_y = 600
+        # Where the most recent scroll wheel was actually delivered (after UIA
+        # snapping). Used to crop the scroll no-op check to the modal/list
+        # region — a multi-row scroll of a small modal moves only ~2% of total
+        # pixels (full-image mean ~2, below noise) yet changes that region
+        # massively (region mean ~16). None until the first scroll.
+        self._last_scroll_target: tuple[float, float] | None = None
         # ffmpeg subprocess that records the entire screen for the duration
         # of the run; lets us replay what actually happened on screen
         # afterwards (cursor moves, click landings, layout shifts) and
@@ -918,26 +939,46 @@ class TaskRunner(QThread):
                     screen.capture(verify_path)
                 except Exception:
                     verify_path = None
-                if verify_path and _scroll_was_noop(shot, verify_path):
+                scroll_region = (
+                    (self._last_scroll_target[0], self._last_scroll_target[1], 450)
+                    if self._last_scroll_target is not None else None)
+                if verify_path and _scroll_was_noop(shot, verify_path,
+                                                    region=scroll_region):
                     # NO cursor-cycling retry here. The old version re-scrolled
                     # at up to four different screen points (right-half,
                     # left-half, upper-center …), which yanked the mouse all
                     # over after a scroll and looked erratic. Just detect the
                     # no-op and let the model re-aim its own scroll next turn.
-                    used_xy = (action.get("scroll_x") is not None
-                               and action.get("scroll_y") is not None)
                     pending_feedback = (
-                        "Your scroll produced NO visible screen change. "
-                        + ("scroll_x/scroll_y were set but the wheel didn't "
-                           "reach a scrollable element. "
-                           if used_xy else
-                           "You did not pass scroll_x/scroll_y. ")
-                        + "Either the list is at its end, or the scrollable "
-                          "area is elsewhere. If more content exists, RE-ISSUE "
-                          "scroll with scroll_x/scroll_y pointing at a DIFFERENT "
-                          "spot (look at the screenshot for the scrollbar / list "
-                          "rows). Otherwise treat the list as fully processed."
+                        "Your scroll produced NO visible screen change. The "
+                        "runner already aimed the wheel at the scrollable list "
+                        "for you, so this most likely means the list is at its "
+                        "END — there is nothing more below. Treat the list as "
+                        "fully processed and proceed (or declare `done` once "
+                        "every item has been handled). Only if you are sure "
+                        "more content exists should you RE-ISSUE scroll with "
+                        "scroll_x/scroll_y pointing at a clearly different "
+                        "scrollable region."
                     )
+
+    def _scroll_target(self, hint_xy: tuple[float, float] | None):
+        """Snap a scroll hint onto the center of a UIA element that genuinely
+        exposes a vertical Scroll pattern, so the wheel lands on scrollable
+        content instead of the model's drifting guess. Returns (x,y) in
+        screenshot px, or None to keep the caller's own target.
+
+        Windows-only and best-effort: returns None off-Windows, when the UIA
+        source can't run, or when nothing scrollable is found. Disable with
+        PHANTOM_SCROLL_UIA=0."""
+        if sys.platform != "win32":
+            return None
+        if os.environ.get("PHANTOM_SCROLL_UIA", "1") != "1":
+            return None
+        try:
+            from . import uia_win
+            return uia_win.find_scroll_target(hint_xy)
+        except Exception:
+            return None
 
     def _verify_done_by_scroll(self, screen: Screen, inp: Input,
                                before_path: str, step: int,
@@ -951,9 +992,25 @@ class TaskRunner(QThread):
         We anchor on the last click (where the list/modal is) or fall back to
         screen-centre — one move, not a sweep."""
         verify_path = os.path.join(self._tmpdir, f"verify_done_{step:02d}.png")
-        cx, cy = last_click_xy if last_click_xy is not None else (sw * 0.5, sh * 0.5)
+        # Anchor the verify-scroll on the LIST itself, not the last click — the
+        # last click is often the 关注/count button in the PAGE HEADER, and
+        # scrolling there no-ops and FALSELY accepts a premature `done` (seen on
+        # resume: agent re-opens the modal, scrolls once, declares done). The
+        # list we're verifying is a centered modal, so snap from screen-centre;
+        # fall back to the last click only if no scrollable list is found there.
+        tgt = self._scroll_target((sw * 0.5, sh * 0.55))
+        if tgt is None and last_click_xy is not None:
+            tgt = self._scroll_target(last_click_xy)
+        cx, cy = tgt if tgt is not None else (sw * 0.5, sh * 0.55)
+        # Burst of events (not one) + region-cropped check, mirroring the live
+        # scroll path — a single event moves a modal too little to register, so
+        # a one-event full-image probe would falsely accept a premature `done`.
         try:
-            inp.scroll("down", x=cx, y=cy)
+            probe_clicks = int(os.environ.get("PHANTOM_SCROLL_CLICKS", "5") or 5)
+        except ValueError:
+            probe_clicks = 5
+        try:
+            inp.scroll("down", clicks=probe_clicks, x=cx, y=cy)
         except Exception:
             return False
         time.sleep(_POST_ACTION_DELAY_S)
@@ -961,7 +1018,8 @@ class TaskRunner(QThread):
             screen.capture(verify_path)
         except Exception:
             return False
-        return not _scroll_was_noop(before_path, verify_path)
+        return not _scroll_was_noop(before_path, verify_path,
+                                    region=(cx, cy, 450))
 
     def _dispatch(self, inp: Input, action: dict,
                   scroll_fallback: tuple[float, float] | None = None):
@@ -1020,14 +1078,36 @@ class TaskRunner(QThread):
                     sx, sy = scroll_fallback
                 else:
                     sx, sy = self._scroll_default_x, self._scroll_default_y
-            # Number of wheel EVENTS per scroll action; each moves
-            # PHANTOM_SCROLL_STEP real detents (see Input.scroll). Default 1 —
-            # one detent ≈ half a modal viewport, enough to progress without
-            # skipping rows. PHANTOM_SCROLL_CLICKS tunes it.
+            # Deterministic targeting: the wheel only scrolls the element under
+            # the cursor, and (sx,sy) is just a guess that often drifts onto a
+            # non-scrolling zone (a modal's header/padding, or the dimmed page
+            # backdrop) → the wheel no-ops and the list never advances. Snap
+            # onto a UIA element that ACTUALLY exposes a vertical Scroll
+            # pattern, using (sx,sy) only as a hint for WHICH scrollable when
+            # several exist. One stable point (the container center) — this is
+            # the safe replacement for the old erratic multi-point retry.
+            tgt = self._scroll_target((sx, sy))
+            if tgt is not None:
+                # Harness-only trace (PHANTOM_RUN_DIR is set by the test
+                # harness) so a review run can confirm the snap fired and see
+                # where the wheel actually went vs. the model's guess.
+                if os.environ.get("PHANTOM_RUN_DIR"):
+                    print(f"[scroll] UIA snap ({sx},{sy}) -> {tgt}",
+                          file=sys.stderr, flush=True)
+                sx, sy = tgt
+            # Remember where the wheel goes so the no-op check can crop to it.
+            self._last_scroll_target = (sx, sy)
+            # Number of wheel EVENTS per scroll action. Default 5: web modals
+            # like Douyin's follow roster scroll a FIXED small step per wheel
+            # event regardless of delta magnitude (~½ a row/event, measured),
+            # so a single event moves too little to register or make progress.
+            # Five events ≈ 2-3 rows — clear movement with row overlap, and on
+            # an ordinary page still just a normal scroll. PHANTOM_SCROLL_CLICKS
+            # overrides.
             try:
-                clicks = int(os.environ.get("PHANTOM_SCROLL_CLICKS", "1") or 1)
+                clicks = int(os.environ.get("PHANTOM_SCROLL_CLICKS", "5") or 5)
             except ValueError:
-                clicks = 1
+                clicks = 5
             inp.scroll(action.get("direction", "down"), clicks=clicks, x=sx, y=sy)
         elif act in ("done", "wait"):
             return
