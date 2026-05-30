@@ -105,6 +105,89 @@ def _scroll_was_noop(before_path: str, after_path: str,
     return mean < diff_threshold
 
 
+def _uia_element_count() -> int:
+    """Quick interactive-element count of the foreground window via UIA.
+    Returns 0 on any failure (UIA unavailable, non-Chrome window without
+    accessibility, COM error). Detection-free: UIA reads the OS accessibility
+    tree, invisible to page JS — even when the browser has AT enabled, page
+    JS cannot tell which AT consumer is querying.
+    """
+    if sys.platform != "win32":
+        return 0
+    try:
+        from . import uia_win
+        boxes = uia_win.collect_foreground_elements(
+            max_elements=500, time_budget_s=0.6)
+        return len(boxes)
+    except Exception:
+        return 0
+
+
+def _wait_for_stable_screen(screen,
+                            output_path: str,
+                            min_wait_s: float = 0.4,
+                            max_wait_s: float = 4.0,
+                            poll_s: float = 0.35,
+                            uia_count_delta_threshold: int = 5,
+                            stable_consecutive: int = 2,
+                            fallback_wait_s: float = 1.0) -> bool:
+    """Adaptive wait for the UI to settle, then capture — replaces the old
+    fixed `time.sleep(_POST_ACTION_DELAY_S) + screen.capture()` after a click.
+
+    Stability signal: UIA element count of the foreground window. A loading
+    page has a sparse accessibility tree; once DOM nodes mount it plateaus.
+    UIA is SEMANTIC, not pixel-based, so it's naturally INSENSITIVE to full-
+    screen video playback — the playing video is one Image element regardless
+    of frame, the action rail / sidebar / comment count are fixed elements,
+    so the count stays stable even though pixels change every refresh. This
+    is exactly what Douyin's recommended-feed needs: clicking +follow
+    shouldn't wait 4s just because a video is playing in the background.
+
+    Always waits at least `min_wait_s` so the click animation can start;
+    gives up after `max_wait_s` so a page that keeps mounting items (e.g.
+    infinite scroll) can't stall the run. If UIA isn't available at all
+    (returns 0 — non-Chrome target, COM failure), falls through to a single
+    capture after `min_wait_s` (the previous behaviour, minus the redundant
+    1s pad).
+
+    Writes the freshest capture to `output_path`, returns True on success.
+
+    Fix for a long-standing premature-screenshot bug: profile pages on Douyin
+    take 1-3s to render the gender badge, but the previous fixed 1s post-click
+    delay fired the screenshot mid-load → the agent saw "no tag" and skipped
+    real males (e.g. Charles in the blacklist run)."""
+    time.sleep(min_wait_s)
+    deadline = time.monotonic() + max(0.0, max_wait_s - min_wait_s)
+    last_count = _uia_element_count()
+    if last_count > 0:
+        stable_runs = 0
+        while time.monotonic() < deadline:
+            time.sleep(poll_s)
+            cur_count = _uia_element_count()
+            if cur_count == 0:
+                # UIA failed mid-poll — stop polling, take what we have.
+                break
+            if abs(cur_count - last_count) <= uia_count_delta_threshold:
+                stable_runs += 1
+                if stable_runs >= stable_consecutive:
+                    break
+            else:
+                stable_runs = 0
+            last_count = cur_count
+    elif fallback_wait_s > min_wait_s:
+        # No UIA signal available (macOS — no equivalent wired up; or a COM
+        # failure on Windows). Without the polling loop above, total wait would
+        # collapse to just `min_wait_s` (0.4s for clicks) — a regression vs the
+        # previous fixed 1.0s. Pad with `fallback_wait_s - min_wait_s` so total
+        # wait is at least the legacy value, preserving macOS click behaviour.
+        time.sleep(fallback_wait_s - min_wait_s)
+    try:
+        screen.capture(output_path)
+        return True
+    except Exception:
+        return False
+
+
 def _frame_sig(path: str):
     """64-bit average-hash of a screenshot, for loop detection: downscale to
     8x8 grayscale, bit = pixel brighter than the frame mean. The Hamming
@@ -829,27 +912,46 @@ class TaskRunner(QThread):
                 self.finished_ok.emit(action.get("reasoning") or "done")
                 return
 
-            # Pause so click effects (animations, modals, like-count updates)
-            # fully render before the next screenshot.
-            time.sleep(_POST_ACTION_DELAY_S)
+            # Click-effect verification AND adaptive wait-for-load: when the
+            # model just clicked, wait ADAPTIVELY (not a fixed 1s) until the
+            # screen stops changing — handles slow profile loads where the
+            # gender badge / button labels take 1-3s to render. The capture
+            # doubles as next turn's input, so a premature one made the agent
+            # see a half-loaded page (e.g. Charles classed "no tag, skipped"
+            # in the blacklist run because the male ♂ hadn't rendered yet).
+            # For non-click actions (scroll/key/type) keep the fixed pause —
+            # their effect is usually quick and stable.
+            if (action.get("action") in ("click", "double_click")
+                and isinstance(action.get("x"), (int, float))
+                and isinstance(action.get("y"), (int, float))):
+                verify_path = os.path.join(self._tmpdir,
+                                           f"verify_{step:02d}.png")
+                if not _wait_for_stable_screen(screen, verify_path):
+                    verify_path = None
+            elif action.get("action") == "wait":
+                # Explicit wait: model says the screen hasn't finished
+                # rendering (captcha puzzle still blank, profile still a
+                # skeleton). Run the adaptive stabilizer with a longer
+                # ceiling so slow renders (captcha images, lazy media) get
+                # the time they need — captcha.detect() then has a fully
+                # painted puzzle to find piece/gaps in on the next turn.
+                _wait_for_stable_screen(
+                    screen,
+                    os.path.join(self._tmpdir, f"wait_{step:02d}.png"),
+                    min_wait_s=0.8, max_wait_s=8.0,
+                    fallback_wait_s=1.5)
+            else:
+                time.sleep(_POST_ACTION_DELAY_S)
 
-            # Click-effect verification: when the model just clicked, take
-            # a fresh screenshot and compare a region around the click point
-            # to the pre-click image. If the region is essentially unchanged
-            # we know the click did nothing (missed the target / hit dead
-            # space) and feed that back so the model re-localizes instead of
-            # blindly incrementing its `progress` counter on a phantom
-            # success. Verify image is reused as the next turn's input — no
-            # extra screen capture.
+            # Inner block below handles the noop check + retries when verify
+            # exists; preserved structure so the existing logic re-uses
+            # `verify_path`.
             if action.get("action") in ("click", "double_click"):
                 cx, cy = action.get("x"), action.get("y")
                 if isinstance(cx, (int, float)) and isinstance(cy, (int, float)):
-                    verify_path = os.path.join(self._tmpdir,
-                                               f"verify_{step:02d}.png")
-                    try:
-                        screen.capture(verify_path)
-                    except Exception:
-                        verify_path = None
+                    # verify_path is already set by the adaptive wait above
+                    # (may be None on capture failure).
+                    pass
                     if verify_path and _click_was_noop(
                         shot, verify_path, cx, cy, (sw, sh)
                     ):

@@ -159,7 +159,7 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 Action notes:
 - ONE action per turn. The next turn shows the result.
-- To open an app: if its icon is visible (taskbar, dock, desktop, Start/Launchpad), CLICK it — that's the mouse-first path. Only when no icon is reachable, fall back to keyboard launch (macOS: `{primary_mod}+space`, `type` the app's native name — in its own script for non-Latin names — then `key: enter`).
+- To open an app: if its icon is visible (taskbar, dock, desktop, Start/Launchpad), CLICK it — that's the mouse-first path. Only when no icon is reachable, fall back to keyboard launch (macOS: `{primary_mod}+space`, `type` the app's native name — in its own script for non-Latin names — then `key: enter`).{maximize_note}
 - IGNORE unrelated windows: terminals, IDEs, log panels, monitor outputs. Don't wait on their spinners or take cues from their text.
 - To scroll: emit `scroll` with just a `direction` and normally NO `scroll_x`/`scroll_y`. The runner scrolls at a point near screen-center, which is inside a centered modal/popover as well as the page — so omitting the coords is the reliable default. Set `scroll_x`/`scroll_y` ONLY when the scrollable region is clearly OFF-center (a left sidebar, a right-docked panel), and express them in the SAME convention as click x/y (do NOT switch to raw pixels). Wrong-convention scroll coords land off-screen and the scroll does nothing.
 - `done` when your `progress` shows the task is fully complete. `wait` when content is still loading."""
@@ -328,10 +328,30 @@ class VisionClient:
         from . import som
         self._som_active = som.enabled()
         som_instructions = SOM_INSTRUCTIONS if self._som_active else ""
+        # Windows-only: tell the model to maximize a newly-opened window first
+        # (Chrome on a non-maximized window leaves taskbar/other-windows pixels
+        # visible, which derails SoM detection and steals clicks). macOS apps
+        # don't have an equivalent "fill the screen" mode that helps — the green
+        # button enters fullscreen which HIDES the menu bar and is worse for the
+        # agent — so the rule is omitted there. Leading newline preserves the
+        # bullet-list formatting in the source.
+        maximize_note = ("\n- AFTER OPENING ANY APP/BROWSER WINDOW (Chrome, "
+            "native apps, file managers, …): if the new window does NOT "
+            "already fill the screen edge-to-edge, your VERY FIRST follow-up "
+            "action MUST be to maximize it — click the title-bar MAXIMIZE "
+            "button (the small SQUARE / \"□\" icon between the `_` minimize "
+            "and the `×` close, at the very top-right corner of the window). "
+            "A non-maximized Chrome leaves the taskbar, desktop, and other "
+            "windows visible behind it, which derails subsequent element "
+            "detection and can steal your clicks. SKIP this step only when "
+            "the window is ALREADY edge-to-edge (the title-bar slot shows two "
+            "overlapping squares \"❐\" instead of one — that's the restore "
+            "icon, meaning it IS maximized). Do NOT use a keyboard shortcut; "
+            "click the button.") if sys.platform == "win32" else ""
         self.system = SYSTEM_PROMPT.format(
             platform_name=plat, width=prompt_w, height=prompt_h,
             primary_mod=primary_mod, coord_instructions=coord_instructions,
-            som_instructions=som_instructions,
+            som_instructions=som_instructions, maximize_note=maximize_note,
         )
         # Append knowledge base — task-specific procedural tips that the
         # model can't be expected to derive from training (e.g. how Douyin's
