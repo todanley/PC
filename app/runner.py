@@ -13,7 +13,7 @@ from PySide6.QtCore import QThread, Signal
 
 from . import humanize
 from . import som
-from .platform_layer import Input, Screen
+from .platform_layer import Input, Screen, capabilities
 from .vision import VisionClient, VisionError
 
 
@@ -112,7 +112,7 @@ def _uia_element_count() -> int:
     tree, invisible to page JS — even when the browser has AT enabled, page
     JS cannot tell which AT consumer is querying.
     """
-    if sys.platform != "win32":
+    if not capabilities.has_uia:
         return 0
     try:
         from . import uia_win
@@ -787,24 +787,33 @@ class TaskRunner(QThread):
                 time.sleep(_POST_ACTION_DELAY_S)
                 continue
 
-            # Hard reject menu-bar clicks (y<25). The system prompt warns
-            # against this but smaller models (Kimi K2.5, Haiku 4.5) violate
-            # it on Step 1 anyway, opening a macOS dropdown that costs the
-            # whole next turn to dismiss. Cheap to enforce here.
-            if action.get("action") in ("click", "double_click"):
+            # Hard reject clicks that land in the OS global menu bar (macOS
+            # only — `capabilities.menu_bar_max_y` is 0 on Windows so this
+            # branch is inert there). The system prompt warns against this
+            # but smaller models (Kimi K2.5, Haiku 4.5) violate it on Step 1
+            # anyway, opening a macOS dropdown that costs the whole next
+            # turn to dismiss. Cheap to enforce here. NOTE: on Windows the
+            # title bar, address bar and close button live in the same y
+            # band (y<35-ish) and are legitimate targets, so this MUST be
+            # gated by platform — a previous regression let the unconditional
+            # `y < 25` rule fire on Windows and stuck the agent on Chrome's
+            # address bar.
+            menu_bar_y = capabilities.menu_bar_max_y
+            if menu_bar_y > 0 and action.get("action") in ("click", "double_click"):
                 yv = action.get("y")
-                if isinstance(yv, (int, float)) and yv < 25:
+                if isinstance(yv, (int, float)) and yv < menu_bar_y:
                     xv = action.get("x")
                     self.step_done.emit(step, {
                         "action": "rejected_menubar_click",
                         "x": xv, "y": yv,
-                        "reasoning": "runner: y<25 hits the macOS menu bar — rejected.",
+                        "reasoning": f"runner: y<{menu_bar_y} hits the OS menu bar — rejected.",
                     })
                     pending_feedback = (
-                        f"Your click at ({xv},{yv}) was REJECTED — y<25 is the "
-                        "macOS menu bar and clicking there opens a system dropdown. "
-                        "Pick an element INSIDE the app's content area (y≥25). "
-                        "Re-localize from THIS screenshot."
+                        f"Your click at ({xv},{yv}) was REJECTED — y<{menu_bar_y} "
+                        "is the OS global menu bar and clicking there opens a "
+                        "system dropdown. Pick an element INSIDE the app's "
+                        f"content area (y≥{menu_bar_y}). Re-localize from THIS "
+                        "screenshot."
                     )
                     time.sleep(_POST_ACTION_DELAY_S)
                     continue
@@ -1124,10 +1133,10 @@ class TaskRunner(QThread):
         content instead of the model's drifting guess. Returns (x,y) in
         screenshot px, or None to keep the caller's own target.
 
-        Windows-only and best-effort: returns None off-Windows, when the UIA
-        source can't run, or when nothing scrollable is found. Disable with
-        PHANTOM_SCROLL_UIA=0."""
-        if sys.platform != "win32":
+        Windows-only and best-effort: returns None on platforms without UIA,
+        when the UIA source can't run, or when nothing scrollable is found.
+        Disable with PHANTOM_SCROLL_UIA=0."""
+        if not capabilities.has_uia:
             return None
         if os.environ.get("PHANTOM_SCROLL_UIA", "1") != "1":
             return None
@@ -1211,6 +1220,20 @@ class TaskRunner(QThread):
             if isinstance(x, (int, float)) and isinstance(y, (int, float)):
                 inp.click(x, y)
                 time.sleep(0.15)
+            # Optional clear-first: when the model sets `"clear_first": true`,
+            # select all in the focused field and let the type overwrite it.
+            # Cures the address-bar concatenation loop where a retry typed
+            # `douyin.com` into a field that still held the previous URL,
+            # producing `chrome://newtab/douyin.com` and a failed navigation.
+            # The model decides per-turn — for empty fields it omits the
+            # flag so we don't waste an action on a select-all that
+            # consumes the focus.
+            if action.get("clear_first"):
+                try:
+                    inp.press_combo(capabilities.select_all_combo)
+                    time.sleep(0.08)
+                except Exception:
+                    pass
             inp.type_text(action.get("text", ""))
         elif act == "key":
             inp.press_combo(action.get("key", ""))

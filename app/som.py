@@ -28,7 +28,7 @@ sends the image without resizing. The caller converts to OS click-space the
 same way it does for model-returned pixel coords.
 """
 import os
-import sys
+from .platform_layer import capabilities
 import threading
 
 # All heavy deps (cv2, numpy, rapidocr, PIL.ImageFont) are imported lazily
@@ -247,9 +247,9 @@ class SetOfMarkEngine:
         """Interactive elements of the FOREGROUND window (whatever app the task
         is driving) plus the desktop icons, read via Windows UI Automation (the
         accessibility tree). App-agnostic. Boxes come back in screenshot-pixel
-        space. Windows-only; returns [] when disabled, off-Windows, the dep is
-        missing, or on any failure (never raises)."""
-        if not _UIA_ENABLED or sys.platform != "win32":
+        space. Windows-only; returns [] when disabled, on a platform without
+        UIA, the dep is missing, or on any failure (never raises)."""
+        if not _UIA_ENABLED or not capabilities.has_uia:
             return []
         try:
             from . import uia_win

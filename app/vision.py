@@ -148,6 +148,7 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
   "piece_mark": <int>, "gap_mark": <int>, // for slide_captcha ONLY: the mark on the puzzle PIECE and the mark on the matching GAP/shadow. The runner drags the slider handle by the exact piece→gap distance.
   "x": <num>, "y": <num>,           // for click / double_click
   "text": "<string>",               // for type
+  "clear_first": <bool>,            // OPTIONAL for type — set true when the focused field already holds stale text (e.g. an address bar that auto-completed, a search box pre-filled with your last query, a URL bar still showing the previous page). The runner sends select-all (Ctrl/Cmd+A) before typing so the new text REPLACES the old instead of appending. Leave false / omit when the field is empty (just opened, just cleared) — a needless select-all on an empty box wastes nothing but isn't harmless when focus is fragile.
   "key": "<combo>",                 // for key, e.g. "{primary_mod}+space", "enter"
   "direction": "up" | "down",       // for scroll
   "scroll_x": <num>, "scroll_y": <num>, // OPTIONAL and usually OMIT. Leave them out for normal page scrolls AND for centered modals/popovers — the runner auto-targets a sensible point near screen-center that lands inside a centered overlay. Only set them when the scrollable area is clearly OFF-center (e.g. a narrow left sidebar or a right-docked panel), and then use the SAME coordinate convention as click x/y.
@@ -180,11 +181,11 @@ SLIDER CAPTCHA: if the screen is a verification puzzle (a piece to slide into a 
 
 
 def _platform_strings():
-    if sys.platform == "darwin":
-        return ("macOS", "cmd")
-    if sys.platform == "win32":
-        return ("Windows", "ctrl")
-    return (sys.platform, "ctrl")
+    """Display name + primary-modifier strings used to introduce the host to
+    the model. Sourced from `platform_layer.capabilities` so the answer is
+    consistent with every other platform-conditional decision in the app."""
+    from .platform_layer import capabilities
+    return (capabilities.name, capabilities.primary_mod)
 
 
 class VisionError(Exception):
@@ -323,6 +324,7 @@ class VisionClient:
         # button enters fullscreen which HIDES the menu bar and is worse for the
         # agent — so the rule is omitted there. Leading newline preserves the
         # bullet-list formatting in the source.
+        from .platform_layer import capabilities as _caps
         maximize_note = ("\n- AFTER OPENING ANY APP/BROWSER WINDOW (Chrome, "
             "native apps, file managers, …): if the new window does NOT "
             "already fill the screen edge-to-edge, your VERY FIRST follow-up "
@@ -335,7 +337,7 @@ class VisionClient:
             "the window is ALREADY edge-to-edge (the title-bar slot shows two "
             "overlapping squares \"❐\" instead of one — that's the restore "
             "icon, meaning it IS maximized). Do NOT use a keyboard shortcut; "
-            "click the button.") if sys.platform == "win32" else ""
+            "click the button.") if _caps.prompt_window_maximize else ""
         self.system = SYSTEM_PROMPT.format(
             platform_name=plat, width=prompt_w, height=prompt_h,
             primary_mod=primary_mod, coord_instructions=coord_instructions,
