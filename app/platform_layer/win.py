@@ -291,6 +291,37 @@ class Input:
         equal zoom_in. Wheel-based so it never risks the Magnifier."""
         self._wheel_zoom(steps, -1)
 
+    def maximize_foreground_window_if_chrome(self) -> bool:
+        """If the OS foreground window is a Chrome window that isn't already
+        maximized, maximize it via Win32 ShowWindow(SW_MAXIMIZE). Returns True
+        iff a maximize was actually dispatched.
+
+        Takes the maximize decision out of the model's hands: rather than
+        relying on the SYSTEM_PROMPT bullet (which gemini-3.5-flash and other
+        instruction-following-light models can skip), the runner just enforces
+        it. Limited to Chrome windows so we never accidentally maximize the
+        Phantom-Click GUI / terminal / IDE that happens to be the foreground.
+        Never raises.
+        """
+        try:
+            import win32gui
+            import win32con
+            hwnd = win32gui.GetForegroundWindow()
+            if not hwnd or not win32gui.IsWindowVisible(hwnd):
+                return False
+            # Chrome's top-level windows use this class on every release we
+            # support. If the foreground is something else (Phantom-Click,
+            # an IDE, the desktop, a captcha popup), we leave it alone.
+            if win32gui.GetClassName(hwnd) != "Chrome_WidgetWin_1":
+                return False
+            # IsZoomed → bool: window is currently maximized.
+            if ctypes.windll.user32.IsZoomed(hwnd):
+                return False
+            win32gui.ShowWindow(hwnd, win32con.SW_MAXIMIZE)
+            return True
+        except Exception:
+            return False
+
     def drag(self, x1: float, y1: float, x2: float, y2: float):
         """Press at (x1,y1), drag along a human-like eased path to (x2,y2),
         release.

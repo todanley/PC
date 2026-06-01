@@ -575,6 +575,20 @@ class TaskRunner(QThread):
                     pass
 
             self.step_started.emit(step, f"Step {step}: capturing screen…")
+            # Enforce window-maximize on Chrome before the screenshot so the
+            # model never sees a windowed Chrome with the taskbar / desktop /
+            # other windows peeking through. The SYSTEM_PROMPT bullet asked
+            # the model to do this itself, but smaller models (gemini-3.5-
+            # flash, claude-haiku, kimi) skip it under load. Doing it
+            # runner-side removes the decision: if Chrome is the foreground
+            # and not already maximized, we maximize via Win32 ShowWindow.
+            # Other foreground windows (Phantom-Click GUI, terminal, IDE) are
+            # left alone. On macOS the method is a no-op (the platform's
+            # 'maximize' enters fullscreen which is worse for the agent).
+            try:
+                inp.maximize_foreground_window_if_chrome()
+            except Exception:
+                pass
             shot = self._shot_path(step)
             try:
                 screen.capture(shot)

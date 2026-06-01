@@ -78,6 +78,14 @@ class Input:
         dy = -clicks if direction == "down" else clicks
         self._pi.scroll(dy=dy)
 
+    def maximize_foreground_window_if_chrome(self) -> bool:
+        """No-op on macOS — the platform's 'maximize' (green button) enters
+        fullscreen which HIDES the menu bar and is worse for the agent. The
+        runner calls this every turn; we just return False here so the
+        cross-platform call site stays clean. See app/platform_layer/win.py
+        for the Windows implementation."""
+        return False
+
 
 class Screen:
     def __init__(self):
