@@ -86,6 +86,14 @@ class Input:
         for the Windows implementation."""
         return False
 
+    def set_chrome_entry_zoom(self, ticks_above_100: int = 2) -> bool:
+        """No-op on macOS for now — would need to identify the Chrome window
+        before dispatching Cmd+0 / Cmd+= (else the zoom hits whatever app is
+        foreground, including the agent's own GUI). Stub kept so callers can
+        invoke the same interface across platforms. See app/platform_layer/
+        win.py for the Windows implementation."""
+        return False
+
 
 class Screen:
     def __init__(self):

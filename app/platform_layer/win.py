@@ -291,6 +291,41 @@ class Input:
         equal zoom_in. Wheel-based so it never risks the Magnifier."""
         self._wheel_zoom(steps, -1)
 
+    def set_chrome_entry_zoom(self, ticks_above_100: int = 2) -> bool:
+        """Reset Chrome's page zoom to default and then bump it up by
+        `ticks_above_100` zoom levels. Chrome levels are 100→110→125→150 …,
+        so the default 2 ticks lands at ~125%.
+
+        High-DPI displays (3840×1600 ultrawides, 4K laptops, retina) pack so
+        many physical pixels into the viewport that Chrome at 100% zoom
+        renders nav text and avatars at ~10-14 px each. After the screenshot
+        is resized for the model's vision encoder, those become unreadable
+        blobs and the model resorts to coordinate guessing. Bumping zoom at
+        entry makes UI text and buttons big enough for the vision model to
+        read precisely.
+
+        Reset-then-bump is deliberate: Chrome remembers per-site zoom, so a
+        fresh session may already be at 110% / 125% from a previous run.
+        Without reset, stacking zoom_in pushes past 150% and breaks layout.
+
+        Returns True iff zoom was actually dispatched (foreground was Chrome).
+        Best-effort; never raises.
+        """
+        try:
+            import win32gui
+            hwnd = win32gui.GetForegroundWindow()
+            if not hwnd or win32gui.GetClassName(hwnd) != "Chrome_WidgetWin_1":
+                return False
+            # Reset to 100% (Ctrl+0 — handles Chrome's remembered per-site zoom).
+            self.press_combo(f"{self._ctrl_key()}+0")
+            time.sleep(0.12)
+            # Then bump up by the requested number of zoom levels.
+            if ticks_above_100 > 0:
+                self.zoom_in(ticks_above_100)
+            return True
+        except Exception:
+            return False
+
     def maximize_foreground_window_if_chrome(self) -> bool:
         """If the OS foreground window is a Chrome window that isn't already
         maximized, maximize it via Win32 ShowWindow(SW_MAXIMIZE). Returns True

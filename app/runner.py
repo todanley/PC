@@ -522,6 +522,12 @@ class TaskRunner(QThread):
         # between the handle estimate landing ON vs. BESIDE the button. Reset
         # zoom when the captcha clears. (Tracked across turns.)
         captcha_zoom_applied = False
+        # Entry-zoom: one-shot per run, latched the first time Chrome becomes
+        # the OS foreground. We reset zoom to 100 % then bump to ~125 % so UI
+        # text and buttons are big enough for the vision model to read on
+        # high-DPI displays. Independent of captcha_zoom_applied; the captcha
+        # zoom stacks on top temporarily and resets back to this baseline.
+        entry_zoom_applied = False
         # Loop-breaker state: recent screen avg-hashes, the step of the last
         # auto-recovery, and a count of CONSECUTIVE rapid recoveries (reset when
         # recoveries are spread out — i.e. real progress happened between).
@@ -589,6 +595,21 @@ class TaskRunner(QThread):
                 inp.maximize_foreground_window_if_chrome()
             except Exception:
                 pass
+            # Entry-zoom: the first time Chrome becomes the foreground in
+            # this run, reset its page zoom to default then bump it ~25 %
+            # so UI text/buttons are big enough for the vision model to read
+            # on high-DPI displays (3840×1600 etc.). At 100 % zoom Chrome's
+            # avatars and nav labels render at ~12 px each; after the model-
+            # side resize they become unreadable. One-shot per run, gated to
+            # Chrome foreground so we don't zoom the Phantom-Click GUI or a
+            # terminal. macOS impl is a no-op.
+            if not entry_zoom_applied:
+                try:
+                    if inp.set_chrome_entry_zoom(ticks_above_100=2):
+                        entry_zoom_applied = True
+                        time.sleep(0.35)  # let zoom transition settle
+                except Exception:
+                    pass
             shot = self._shot_path(step)
             try:
                 screen.capture(shot)
