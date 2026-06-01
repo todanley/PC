@@ -121,7 +121,7 @@ GLOBAL HARD RULES:
 
 PROGRESS FIELD: every reply MUST include a `progress` string — your one-line running checklist. The runner echoes the most recent value back to you next turn, so it's your only persistent memory. If `progress` says you finished step X, don't redo it. Keep `progress` factual and based on what your action ACTUALLY changed (verifiable from the next screenshot), not what you intended.
 
-BATCH / LIST TASKS — PERSISTENT DONE-LIST (for any "all / every / 所有 / 全部 …" job over a list — block all males, like every video, unfollow everyone, …): you handle items ONE AT A TIME. The INSTANT you finish one item — its final action is taken (blocked / skipped / liked / unfollowed / …) — set `done_item` to that item's UNIQUE identifier plus the outcome, e.g. "方一 — female, skipped" or "水豚噜噜 — male, blacklisted". The runner PERMANENTLY remembers every `done_item` you report and lists them all back to you each turn under "✅ ALREADY PROCESSED". This is the cure for losing your place: lists scroll back to the top, reload, or get reset by a captcha — the done-list does NOT. HARD RULES:
+BATCH / LIST TASKS — IN-RUN DONE-LIST (for any "all / every / 所有 / 全部 …" job over a list — block all males, like every video, unfollow everyone, …): you handle items ONE AT A TIME. The INSTANT you finish one item — its final action is taken (blocked / skipped / liked / unfollowed / …) — set `done_item` to that item's UNIQUE identifier plus the outcome, e.g. "方一 — female, skipped" or "水豚噜噜 — male, blacklisted". The runner remembers every `done_item` you report FOR THIS RUN and lists them all back to you each turn under "✅ ALREADY PROCESSED". This is the cure for losing your place WITHIN THE RUN: lists scroll back to the top, reload, or get reset by a captcha — the in-run done-list does NOT. The list resets on every new run (no cross-run persistence); each run starts fresh from an empty done-list. HARD RULES:
 ▸ NEVER re-process an item already on the done-list — even if the list jumped back to the top. Recognise it by its identifier (the username/title) and skip it.
 ▸ Each turn, act on the next item whose identifier is NOT on the done-list. If EVERY visible item is already done, SCROLL to reveal new ones (don't re-open profiles you've handled).
 ▸ Report `done_item` exactly once per item, on the turn you complete it. Use the same identifier text you can read on screen so you can match it later.
@@ -154,7 +154,7 @@ Reply with ONLY a JSON object — no prose, no fences. Schema:
   "x1": <num>, "y1": <num>, "x2": <num>, "y2": <num>, // for drag: press at (x1,y1), drag to (x2,y2), release. Use for slider CAPTCHAs, range-sliders, drag-and-drop. Same coord convention as click x/y.
   "reasoning": "<one short sentence on why this single action>",
   "progress": "<running checklist of what's been completed and what's left>",
-  "done_item": "<unique id — outcome>"  // OPTIONAL — set ONLY on the turn you finish ONE item of a batch/list task (see DONE-LIST). The runner remembers it permanently and echoes the full list back so you never redo one.
+  "done_item": "<unique id — outcome>"  // OPTIONAL — set ONLY on the turn you finish ONE item of a batch/list task (see DONE-LIST). The runner remembers it for the rest of this run and echoes the full list back each turn so you never redo one.
 }}
 
 Action notes:
@@ -269,25 +269,13 @@ class VisionClient:
         plat, primary_mod = _platform_strings()
         self.logical_w, self.logical_h = screen_size
         self._last_progress: str = ""  # echoed back to the model each turn
-        # Durable, accumulating done-list for batch/list tasks (block-all,
-        # like-all, …). The model reports each finished item via `done_item`;
-        # we keep them all and re-inject every turn so the agent never redoes
-        # an item after the list scrolls back / reloads / a captcha resets it.
+        # In-run done-list for batch/list tasks (block-all, like-all, …). The
+        # model reports each finished item via `done_item`; we keep them all
+        # in memory and re-inject every turn so the model never redoes an item
+        # after the list scrolls back / reloads / a captcha resets it. Reset
+        # to empty on every fresh run — no cross-run persistence; each run
+        # discovers the list organically.
         self._done_items: list[str] = []
-        # Optional cross-run persistence: when PHANTOM_DONELIST_FILE is set, the
-        # list is loaded on start and saved on every update, so a run that was
-        # cancelled / drained its quota can RESUME a half-finished list instead
-        # of re-checking from the top. Off by default (shipped exe doesn't set
-        # it → in-run memory only).
-        self._donelist_file: str = os.environ.get("PHANTOM_DONELIST_FILE", "")
-        if self._donelist_file:
-            try:
-                with open(self._donelist_file, encoding="utf-8") as fh:
-                    loaded = json.load(fh)
-                if isinstance(loaded, list):
-                    self._done_items = [str(x) for x in loaded if str(x).strip()]
-            except Exception:
-                pass
         # No downsampling — the screencapture is sent at its native resolution
         # so the model gets every pixel of the UI. Image dimensions equal
         # logical screen dimensions (true on 1x displays; on Retina the
@@ -479,7 +467,7 @@ class VisionClient:
         return item.strip().lower()
 
     def _record_done(self, item: str) -> None:
-        """Append a finished batch item to the durable done-list, deduped by
+        """Append a finished batch item to the in-run done-list, deduped by
         identifier so a re-reported item (model confirming twice) is ignored."""
         item = item.strip()
         if not item:
@@ -490,12 +478,6 @@ class VisionClient:
         if any(self._done_identifier(d) == ident for d in self._done_items):
             return
         self._done_items.append(item)
-        if self._donelist_file:
-            try:
-                with open(self._donelist_file, "w", encoding="utf-8") as fh:
-                    json.dump(self._done_items, fh, ensure_ascii=False)
-            except Exception:
-                pass
         # Harness-only trace so a review run can watch the done-list grow.
         if os.environ.get("PHANTOM_RUN_DIR"):
             try:
