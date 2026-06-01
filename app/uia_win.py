@@ -429,9 +429,23 @@ def find_scroll_target(hint_xy=None, *, origin_xy=None, screen_wh=None,
             hx, hy = hint_xy
             # Pass 1: a real Scroll-pattern container that CONTAINS the hint —
             # the innermost wins (the modal list, not the page document behind
-            # it). This is the precise, trustworthy case.
+            # it). EXCLUDE the page document itself: Chrome 138+ exposes the
+            # top-level renderer as Scroll-pattern and its bounds cover the
+            # whole viewport, so it ALSO contains the hint and used to win when
+            # nothing smaller was tagged. On a centred web modal (Douyin's
+            # follow roster, etc.) that left the wheel landing on the page
+            # document BEHIND the modal — scroll dispatched but the modal
+            # didn't move because the page document was its own scroll target.
+            # We treat anything whose area is >= 60 % of the screen as the
+            # page document and skip it; Pass 2 then runs to infer the modal
+            # list from the cluster of interactive ROW elements around the hint.
+            page_area_threshold = None
+            if sw is not None and sh is not None:
+                page_area_threshold = 0.60 * sw * sh
             containing = [c for c in cands
-                          if c[3] <= hx <= c[5] and c[4] <= hy <= c[6]]
+                          if c[3] <= hx <= c[5] and c[4] <= hy <= c[6]
+                          and (page_area_threshold is None
+                               or c[0] < page_area_threshold)]
             if containing:
                 c = min(containing, key=lambda c: c[0])  # innermost
                 return (c[1], c[2])

@@ -1046,22 +1046,77 @@ class TaskRunner(QThread):
                     if self._last_scroll_target is not None else None)
                 if verify_path and _scroll_was_noop(shot, verify_path,
                                                     region=scroll_region):
-                    # NO cursor-cycling retry here. The old version re-scrolled
-                    # at up to four different screen points (right-half,
-                    # left-half, upper-center …), which yanked the mouse all
-                    # over after a scroll and looked erratic. Just detect the
-                    # no-op and let the model re-aim its own scroll next turn.
-                    pending_feedback = (
-                        "Your scroll produced NO visible screen change. The "
-                        "runner already aimed the wheel at the scrollable list "
-                        "for you, so this most likely means the list is at its "
-                        "END — there is nothing more below. Treat the list as "
-                        "fully processed and proceed (or declare `done` once "
-                        "every item has been handled). Only if you are sure "
-                        "more content exists should you RE-ISSUE scroll with "
-                        "scroll_x/scroll_y pointing at a clearly different "
-                        "scrollable region."
-                    )
+                    # Multi-probe retry: the wheel may have landed somewhere
+                    # inert (e.g. the page document behind a centred modal —
+                    # whose own scrollable child Chrome didn't expose as a
+                    # Scroll-pattern node, so find_scroll_target's UIA pass
+                    # missed it). Try 2 alternate positions before giving up
+                    # and reporting back. Each probe runs at the SAME wheel
+                    # magnitude as the model's original scroll; the moment
+                    # one moves pixels, we stop and use that result instead.
+                    try:
+                        retry_clicks = int(os.environ.get("PHANTOM_SCROLL_CLICKS", "5") or 5)
+                    except ValueError:
+                        retry_clicks = 5
+                    direction = action.get("direction", "down")
+                    # Build distinct retry positions. The model's original
+                    # target sits at self._last_scroll_target; we probe at
+                    # right-of-centre (where a centred modal's scrollbar
+                    # typically lives) and at the modal-area centre.
+                    seen_positions: set[tuple[int, int]] = set()
+                    if self._last_scroll_target is not None:
+                        seen_positions.add(
+                            (int(self._last_scroll_target[0]) // 8,
+                             int(self._last_scroll_target[1]) // 8))
+                    retry_targets = [
+                        (sw * 0.72, sh * 0.55),  # right-of-centre, scrollbar area
+                        (sw * 0.50, sh * 0.55),  # centre fallback
+                    ]
+                    moved = False
+                    for rx, ry in retry_targets:
+                        key = (int(rx) // 8, int(ry) // 8)
+                        if key in seen_positions:
+                            continue
+                        seen_positions.add(key)
+                        try:
+                            inp.scroll(direction, clicks=retry_clicks, x=rx, y=ry)
+                        except Exception:
+                            continue
+                        time.sleep(_POST_ACTION_DELAY_S)
+                        retry_path = os.path.join(
+                            self._tmpdir,
+                            f"verify_{step:02d}_retry.png")
+                        try:
+                            screen.capture(retry_path)
+                        except Exception:
+                            continue
+                        if not _scroll_was_noop(shot, retry_path,
+                                                region=(rx, ry, 450)):
+                            moved = True
+                            self._last_scroll_target = (rx, ry)
+                            break
+                        if not _scroll_was_noop(shot, retry_path,
+                                                region=(sw * 0.5, sh * 0.5, 600)):
+                            moved = True
+                            self._last_scroll_target = (rx, ry)
+                            break
+                    if not moved:
+                        # Report the no-op verbatim, no inference about cause.
+                        # The model decides what it means in context — could
+                        # be end of list, could be wrong scroll region, could
+                        # be a modal we couldn't target. Don't push it toward
+                        # one conclusion.
+                        pending_feedback = (
+                            "Your scroll produced NO visible screen change "
+                            "after the runner also retried at two alternate "
+                            "wheel positions. The pixels under the wheel did "
+                            "not move. Decide what this means in context: it "
+                            "could indicate the list is at its end, or that "
+                            "the scrollable region is somewhere you have not "
+                            "targeted yet. If you believe more content exists, "
+                            "RE-ISSUE scroll with scroll_x/scroll_y pointed at "
+                            "a clearly different scrollable region."
+                        )
 
     def _scroll_target(self, hint_xy: tuple[float, float] | None):
         """Snap a scroll hint onto the center of a UIA element that genuinely
