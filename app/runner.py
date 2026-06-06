@@ -105,57 +105,6 @@ def _scroll_was_noop(before_path: str, after_path: str,
     return mean < diff_threshold
 
 
-def _uia_element_count() -> int:
-    """Quick interactive-element count of the foreground window via UIA.
-    Returns 0 on any failure (UIA unavailable, non-Chrome window without
-    accessibility, COM error). Detection-free: UIA reads the OS accessibility
-    tree, invisible to page JS — even when the browser has AT enabled, page
-    JS cannot tell which AT consumer is querying.
-    """
-    if not capabilities.has_uia:
-        return 0
-    try:
-        from . import uia_win
-        boxes = uia_win.collect_foreground_elements(
-            max_elements=500, time_budget_s=0.6)
-        return len(boxes)
-    except Exception:
-        return 0
-
-
-def _wait_for_stable_screen(screen,
-                            output_path: str,
-                            min_wait_s: float = 0.4,
-                            max_wait_s: float = 4.0,
-                            poll_s: float = 0.35,
-                            uia_count_delta_threshold: int = 5,
-                            stable_consecutive: int = 2,
-                            fallback_wait_s: float = 1.0) -> bool:
-    """Sleep `_POST_ACTION_DELAY_S` then capture. Hardcoded wait — predictable.
-
-    We previously polled the UIA element count to declare "stable" early and
-    move on, but on Douyin's profile / list-modal pages the tree count
-    plateaus BEFORE the gender badge and bio strip have actually rendered
-    (header mounts first, badge paints 1-3 s later). The model then read
-    "no tag" and skipped real males. UIA-stability also gave false positives
-    on pages where a transient loader took several beats to disappear.
-
-    A flat sleep is dumb but right: every step waits the same amount, the
-    DOM has the same budget to settle, no chance of an early-capture
-    mis-classification. If a step needs longer than `_POST_ACTION_DELAY_S`
-    the model can emit `wait` to stack another window.
-
-    Kwargs are kept for source compat with the previous adaptive signature
-    but are now ignored — every call falls through to `_POST_ACTION_DELAY_S`.
-    Returns True on capture success, False on capture failure."""
-    del min_wait_s, max_wait_s, poll_s
-    del uia_count_delta_threshold, stable_consecutive, fallback_wait_s
-    time.sleep(_POST_ACTION_DELAY_S)
-    try:
-        screen.capture(output_path)
-        return True
-    except Exception:
-        return False
 
 
 def _frame_sig(path: str):
@@ -240,13 +189,13 @@ def _refocus():
 
 # Wall-clock delay between dispatching an action and capturing the next
 # screenshot. Lets click animations / page transitions / lazy-loaded bio
-# strips render before the next vision call. Bumped to 4 s after the
-# previous adaptive UIA-stability mechanism kept firing too early on
-# Douyin's profile pages (header mounts → UIA "stable" → screenshot fires
-# → gender badge paints 1-2 s later → model reads no-tag and skips real
-# males). 4 s is a generous fixed floor that covers the slow renders
-# without making fast pages feel sluggish. Override with PHANTOM_POST_ACTION_DELAY_S.
-_POST_ACTION_DELAY_S = float(os.environ.get("PHANTOM_POST_ACTION_DELAY_S", "4.0"))
+# strips render before the next vision call. The previous adaptive
+# UIA-stability mechanism declared "stable" too early on Douyin's profile
+# pages (header mounts → UIA "stable" → screenshot fires → gender badge
+# paints 1-2 s later → model reads no-tag and skips real males), so we
+# replaced it with a flat fixed wait. 3 s covers the slow renders without
+# making fast pages feel sluggish. Override with PHANTOM_POST_ACTION_DELAY_S.
+_POST_ACTION_DELAY_S = float(os.environ.get("PHANTOM_POST_ACTION_DELAY_S", "3.0"))
 # Chrome zoom levels (Ctrl+wheel ticks) to enlarge a slider CAPTCHA so its
 # piece/gap/handle are big enough to detect + drag reliably. Each tick is one
 # Chrome zoom step (100→110→125→150→175→200…); ~5 ≈ 175-200%.
@@ -940,27 +889,21 @@ class TaskRunner(QThread):
             # in the blacklist run because the male ♂ hadn't rendered yet).
             # For non-click actions (scroll/key/type) keep the fixed pause —
             # their effect is usually quick and stable.
+            # Flat wait for every action: lets click animations / page
+            # transitions / lazy-loaded bio strips render before the next
+            # vision call. Click and double_click ALSO save the post-wait
+            # capture as the noop-check 'after' image; other actions just
+            # sleep and let the next loop iteration take its own shot.
+            time.sleep(_POST_ACTION_DELAY_S)
             if (action.get("action") in ("click", "double_click")
                 and isinstance(action.get("x"), (int, float))
                 and isinstance(action.get("y"), (int, float))):
                 verify_path = os.path.join(self._tmpdir,
                                            f"verify_{step:02d}.png")
-                if not _wait_for_stable_screen(screen, verify_path):
+                try:
+                    screen.capture(verify_path)
+                except Exception:
                     verify_path = None
-            elif action.get("action") == "wait":
-                # Explicit wait: model says the screen hasn't finished
-                # rendering (captcha puzzle still blank, profile still a
-                # skeleton). Run the adaptive stabilizer with a longer
-                # ceiling so slow renders (captcha images, lazy media) get
-                # the time they need — captcha.detect() then has a fully
-                # painted puzzle to find piece/gaps in on the next turn.
-                _wait_for_stable_screen(
-                    screen,
-                    os.path.join(self._tmpdir, f"wait_{step:02d}.png"),
-                    min_wait_s=0.8, max_wait_s=8.0,
-                    fallback_wait_s=1.5)
-            else:
-                time.sleep(_POST_ACTION_DELAY_S)
 
             # Inner block below handles the noop check + retries when verify
             # exists; preserved structure so the existing logic re-uses
