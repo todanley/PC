@@ -131,56 +131,26 @@ def _wait_for_stable_screen(screen,
                             uia_count_delta_threshold: int = 5,
                             stable_consecutive: int = 2,
                             fallback_wait_s: float = 1.0) -> bool:
-    """Adaptive wait for the UI to settle, then capture — replaces the old
-    fixed `time.sleep(_POST_ACTION_DELAY_S) + screen.capture()` after a click.
+    """Sleep `_POST_ACTION_DELAY_S` then capture. Hardcoded wait — predictable.
 
-    Stability signal: UIA element count of the foreground window. A loading
-    page has a sparse accessibility tree; once DOM nodes mount it plateaus.
-    UIA is SEMANTIC, not pixel-based, so it's naturally INSENSITIVE to full-
-    screen video playback — the playing video is one Image element regardless
-    of frame, the action rail / sidebar / comment count are fixed elements,
-    so the count stays stable even though pixels change every refresh. This
-    is exactly what Douyin's recommended-feed needs: clicking +follow
-    shouldn't wait 4s just because a video is playing in the background.
+    We previously polled the UIA element count to declare "stable" early and
+    move on, but on Douyin's profile / list-modal pages the tree count
+    plateaus BEFORE the gender badge and bio strip have actually rendered
+    (header mounts first, badge paints 1-3 s later). The model then read
+    "no tag" and skipped real males. UIA-stability also gave false positives
+    on pages where a transient loader took several beats to disappear.
 
-    Always waits at least `min_wait_s` so the click animation can start;
-    gives up after `max_wait_s` so a page that keeps mounting items (e.g.
-    infinite scroll) can't stall the run. If UIA isn't available at all
-    (returns 0 — non-Chrome target, COM failure), falls through to a single
-    capture after `min_wait_s` (the previous behaviour, minus the redundant
-    1s pad).
+    A flat sleep is dumb but right: every step waits the same amount, the
+    DOM has the same budget to settle, no chance of an early-capture
+    mis-classification. If a step needs longer than `_POST_ACTION_DELAY_S`
+    the model can emit `wait` to stack another window.
 
-    Writes the freshest capture to `output_path`, returns True on success.
-
-    Fix for a long-standing premature-screenshot bug: profile pages on Douyin
-    take 1-3s to render the gender badge, but the previous fixed 1s post-click
-    delay fired the screenshot mid-load → the agent saw "no tag" and skipped
-    real males (e.g. Charles in the blacklist run)."""
-    time.sleep(min_wait_s)
-    deadline = time.monotonic() + max(0.0, max_wait_s - min_wait_s)
-    last_count = _uia_element_count()
-    if last_count > 0:
-        stable_runs = 0
-        while time.monotonic() < deadline:
-            time.sleep(poll_s)
-            cur_count = _uia_element_count()
-            if cur_count == 0:
-                # UIA failed mid-poll — stop polling, take what we have.
-                break
-            if abs(cur_count - last_count) <= uia_count_delta_threshold:
-                stable_runs += 1
-                if stable_runs >= stable_consecutive:
-                    break
-            else:
-                stable_runs = 0
-            last_count = cur_count
-    elif fallback_wait_s > min_wait_s:
-        # No UIA signal available (macOS — no equivalent wired up; or a COM
-        # failure on Windows). Without the polling loop above, total wait would
-        # collapse to just `min_wait_s` (0.4s for clicks) — a regression vs the
-        # previous fixed 1.0s. Pad with `fallback_wait_s - min_wait_s` so total
-        # wait is at least the legacy value, preserving macOS click behaviour.
-        time.sleep(fallback_wait_s - min_wait_s)
+    Kwargs are kept for source compat with the previous adaptive signature
+    but are now ignored — every call falls through to `_POST_ACTION_DELAY_S`.
+    Returns True on capture success, False on capture failure."""
+    del min_wait_s, max_wait_s, poll_s
+    del uia_count_delta_threshold, stable_consecutive, fallback_wait_s
+    time.sleep(_POST_ACTION_DELAY_S)
     try:
         screen.capture(output_path)
         return True
@@ -269,9 +239,14 @@ def _refocus():
 
 
 # Wall-clock delay between dispatching an action and capturing the next
-# screenshot. Lets click animations / page transitions render before the
-# next vision call.
-_POST_ACTION_DELAY_S = 1.0
+# screenshot. Lets click animations / page transitions / lazy-loaded bio
+# strips render before the next vision call. Bumped to 4 s after the
+# previous adaptive UIA-stability mechanism kept firing too early on
+# Douyin's profile pages (header mounts → UIA "stable" → screenshot fires
+# → gender badge paints 1-2 s later → model reads no-tag and skips real
+# males). 4 s is a generous fixed floor that covers the slow renders
+# without making fast pages feel sluggish. Override with PHANTOM_POST_ACTION_DELAY_S.
+_POST_ACTION_DELAY_S = float(os.environ.get("PHANTOM_POST_ACTION_DELAY_S", "4.0"))
 # Chrome zoom levels (Ctrl+wheel ticks) to enlarge a slider CAPTCHA so its
 # piece/gap/handle are big enough to detect + drag reliably. Each tick is one
 # Chrome zoom step (100→110→125→150→175→200…); ~5 ≈ 175-200%.
