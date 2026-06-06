@@ -67,38 +67,6 @@ A click flips the state, so the visible label is also a record of what
 just happened: a row that now shows the red/Follow style is one whose
 follow relationship was just removed (or never existed).
 
-## CAPTCHA challenges
-
-If a CAPTCHA modal appears (slider puzzle, image-grid quiz, "drag the
-piece into place", "click all images containing X", "rotate to upright",
-etc.), attempt to SOLVE it. Do not click "refresh / 刷新 / 换一张" as a
-first move — refresh just rolls a different challenge of the same type
-and burns turns.
-
-Common patterns and how to attack them:
-
-  • Slider / drag-into-shape puzzle ("拖动滑块完成拼图", "拖动完成上方
-    拼图", or a piece-into-matching-shadow): the runner tags the puzzle
-    PIECE and each candidate GAP/shadow with magenta marks. Do NOT try to
-    drag by eye. Instead identify the piece's mark and the GAP mark whose
-    SHAPE matches the piece, then emit
-    `{"action":"slide_captcha","piece_mark":<piece>,"gap_mark":<gap>}` —
-    the runner computes the exact distance and drags the slider handle.
-    If the puzzle image is still blank/loading (加载中), `wait` first.
-    If no marks appear on the puzzle, fall back to a manual `drag` from
-    the slider handle rightward toward the matching shadow.
-  • Click-sequence quiz ("依次点击 A、B、C" / "click these characters
-    in order"): localize each named target in turn and click them in
-    the requested sequence within the same turn-budget.
-  • Image grid ("select all images containing X"): click each matching
-    cell, then click the confirm button.
-  • Rotation / orientation ("rotate the object upright"): use the
-    rotate handle (usually a circular arrow) to nudge toward upright.
-
-Only fall back to `刷新` / refresh AFTER a genuine solve attempt failed
-(the modal didn't dismiss). Two failed solves in a row → the task is
-likely blocked; report and stop instead of looping refresh forever.
-
 ## Opening a user's profile from a list
 
 When the task wants you to open a specific user's profile from a list

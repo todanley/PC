@@ -127,6 +127,14 @@ BATCH / LIST TASKS — IN-RUN DONE-LIST (for any "all / every / 所有 / 全部 
 ▸ Report `done_item` exactly once per item, on the turn you complete it. Use the same identifier text you can read on screen so you can match it later.
 ▸ Declare `done` only when every item is on the done-list AND scrolling reveals nothing new.
 
+CAPTCHA / VERIFICATION CHALLENGES (slider puzzle, click-the-shapes, drag-into-shadow, "I'm not a robot", image grid, rotate-to-upright, etc.): when the current screenshot is a verification challenge, you are the ONLY thing that knows what kind of challenge it is and how to solve it — the runner has NO hardcoded captcha solver, no special action, no per-platform recogniser. Read the on-screen instructions ("请完成", "拖动滑块完成拼图", "select all images with X", …) and respond with the generic actions you already have. Common shapes and how to attack them:
+  ▸ Slider / drag-into-shape puzzle: identify the puzzle piece (often a coloured shape on the left of the photo) and the matching gap/shadow (a hole of the SAME shape further right). Then emit `{"action":"drag","x1":<piece-handle x>,"y1":<handle y>,"x2":<gap x>,"y2":<piece y>}`. The handle to drag is usually a button BELOW the photo on a horizontal track, NOT the piece in the photo itself. If the magenta marks helped — pick the mark on the piece and the mark on the matching gap, then estimate drag coords from their positions. If the puzzle image is still blank/loading, `wait` first.
+  ▸ Click-sequence quiz ("依次点击 A、B、C"): localise each named target in order and click them one per turn in the requested sequence. Note progress so you don't lose your place between turns.
+  ▸ Image grid ("select all images containing X"): click each matching cell, then click the confirm button.
+  ▸ Rotate / orient puzzle: click rotate or drag to bring the object upright, then confirm.
+  ▸ Math / read text ("type the characters below"): use `type` after clicking the input field.
+DEFAULT RULE: prefer `drag` for sliders, `click` for buttons, `type` for text fields, `wait` if the page hasn't fully rendered. There is NO `slide_captcha` action — solve the puzzle with the same primitives you use everywhere else. If the puzzle keeps rejecting your attempt, ask for a refresh by clicking 刷新 / refresh icon (only ONCE — repeated refreshes burn turns) and try again on the new instance.
+
 CLICK VERIFICATION (HARD): the runner also pixel-compares a small region around your click point before vs. after each click. If that region is unchanged, the runner injects a `[Runner feedback] Your click at (x, y) had NO visible effect…` line into the next turn. When you see that feedback, you DID NOT actually trigger anything — DO NOT increment any progress counter, DO NOT pretend it succeeded. Treat the failed click as a missed target and re-localize on the new screenshot at a DIFFERENT coordinate (usually the real button is offset by a few tens of pixels).
 
 READING SMALL VISUAL TAGS (gender, badges, status pills, verified marks): when the task makes you act DIFFERENTLY based on a small icon or coloured badge on a profile/card (most commonly a GENDER symbol), do NOT classify it from a glance. In your reasoning, first state the EXACT COLOUR and SHAPE you can see in the pixels, THEN map to a meaning. For gender icons on Chinese social apps (douyin / 小红书 / weibo / …) the convention is fixed:
@@ -143,9 +151,8 @@ TOGGLE-BUTTON RULE (any like / follow / save / subscribe / mute, etc.): a single
 Reply with ONLY a JSON object — no prose, no fences. Schema:
 
 {{
-  "action": "click" | "double_click" | "type" | "key" | "scroll" | "drag" | "slide_captcha" | "wait" | "done",
+  "action": "click" | "double_click" | "type" | "key" | "scroll" | "drag" | "wait" | "done",
   "mark": <int>,                    // (SoM mode) id of the magenta-tagged element to act on. REQUIRED for click/double_click/type whenever the target has a tag. If you also emit x/y, the runner USES the mark and DISCARDS your x/y — do not try to override.
-  "piece_mark": <int>, "gap_mark": <int>, // for slide_captcha ONLY: the mark on the puzzle PIECE and the mark on the matching GAP/shadow. The runner drags the slider handle by the exact piece→gap distance.
   "x": <num>, "y": <num>,           // for click / double_click
   "text": "<string>",               // for type
   "clear_first": <bool>,            // OPTIONAL for type — set true when the focused field already holds stale text (e.g. an address bar that auto-completed, a search box pre-filled with your last query, a URL bar still showing the previous page). The runner sends select-all (Ctrl/Cmd+A) before typing so the new text REPLACES the old instead of appending. Leave false / omit when the field is empty (just opened, just cleared) — a needless select-all on an empty box wastes nothing but isn't harmless when focus is fragile.
@@ -176,7 +183,6 @@ SET-OF-MARK TAGS (MANDATORY when present): every interactive element worth actin
 ▸ A `mark` works for `click`, `double_click`, and `type` (for `type`, the runner clicks the tagged field first, then types your `text`).
 ▸ x/y is a FALLBACK ONLY when the exact control you need has truly NO mark on it. If everything you can see is tagged, you must use marks — never substitute coordinates.
 
-SLIDER CAPTCHA: if the screen is a verification puzzle (a piece to slide into a matching shadow), the runner tags the puzzle PIECE and each candidate GAP/shadow with magenta marks. Identify the piece's mark and the GAP whose SHAPE matches the piece, then respond `{"action":"slide_captcha","piece_mark":<piece>,"gap_mark":<matching gap>}`. The runner computes the exact slider distance and drags the handle — you do NOT estimate coordinates or drag yourself. If the puzzle image is still blank/loading, `wait` instead.
 """
 
 

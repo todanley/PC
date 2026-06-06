@@ -196,10 +196,6 @@ def _refocus():
 # replaced it with a flat fixed wait. 3 s covers the slow renders without
 # making fast pages feel sluggish. Override with PHANTOM_POST_ACTION_DELAY_S.
 _POST_ACTION_DELAY_S = float(os.environ.get("PHANTOM_POST_ACTION_DELAY_S", "3.0"))
-# Chrome zoom levels (Ctrl+wheel ticks) to enlarge a slider CAPTCHA so its
-# piece/gap/handle are big enough to detect + drag reliably. Each tick is one
-# Chrome zoom step (100→110→125→150→175→200…); ~5 ≈ 175-200%.
-_CAPTCHA_ZOOM_STEPS = 5
 # Loop-breaker: if the same screen recurs many times the agent is stuck (e.g.
 # Douyin's video-grid trap — open list → mis-click a video → close → repeat).
 # On detection we press Escape (closes the video player / popups) and steer the
@@ -440,17 +436,10 @@ class TaskRunner(QThread):
         # suppressor would silently drop them. PHANTOM_SUPPRESS_REPEAT_CLICKS=0
         # disables it for those runs. Default on (production behavior).
         suppress_repeats = os.environ.get("PHANTOM_SUPPRESS_REPEAT_CLICKS", "1") != "0"
-        # When a slider CAPTCHA is on screen, zoom the page in once so the
-        # puzzle (piece / gap / slider handle) is big enough to detect and drag
-        # reliably — 3 zoom steps make it ~12x larger in area, the difference
-        # between the handle estimate landing ON vs. BESIDE the button. Reset
-        # zoom when the captcha clears. (Tracked across turns.)
-        captcha_zoom_applied = False
         # Entry-zoom: one-shot per run, latched the first time Chrome becomes
         # the OS foreground. We reset zoom to 100 % then bump to ~125 % so UI
         # text and buttons are big enough for the vision model to read on
-        # high-DPI displays. Independent of captcha_zoom_applied; the captcha
-        # zoom stacks on top temporarily and resets back to this baseline.
+        # high-DPI displays.
         entry_zoom_applied = False
         # Loop-breaker state: recent screen avg-hashes, the step of the last
         # auto-recovery, and a count of CONSECUTIVE rapid recoveries (reset when
@@ -561,44 +550,13 @@ class TaskRunner(QThread):
                     self.step_started.emit(
                         step, f"Step {step}: tagged {len(mark_map)} elements")
 
-            # CAPTCHA zoom: when SoM reports a slider puzzle on screen, zoom the
-            # page in ONCE (Ctrl+= ×3) so the puzzle + slider handle are large
-            # enough to localize and drag reliably (≈12x area — proven). The
-            # next loop iteration re-captures the enlarged puzzle, then the
-            # model solves it via slide_captcha. Reset zoom (Ctrl+0) once the
-            # captcha clears. Gated by PHANTOM_CAPTCHA_ZOOM (default on).
-            if (os.environ.get("PHANTOM_CAPTCHA_ZOOM", "1") != "0"
-                    and som_engine is not None and hasattr(inp, "zoom_in")):
-                on_captcha = getattr(som_engine, "last_captcha", None) is not None
-                if on_captcha and not captcha_zoom_applied:
-                    # Ctrl+WHEEL zoom (browser), NOT keyboard Ctrl+= — the
-                    # latter can race into Win+= → Windows Magnifier.
-                    try:
-                        inp.zoom_in(_CAPTCHA_ZOOM_STEPS)
-                    except Exception:
-                        pass
-                    captcha_zoom_applied = True
-                    self.step_started.emit(step, f"Step {step}: zoomed in on CAPTCHA")
-                    time.sleep(0.6)
-                    continue  # re-capture the enlarged puzzle next turn
-                if not on_captcha and captcha_zoom_applied:
-                    try:
-                        inp.zoom_reset(_CAPTCHA_ZOOM_STEPS)
-                    except Exception:
-                        pass
-                    captcha_zoom_applied = False
-
             # Loop-breaker: if this screen has recurred many times the agent is
             # stuck (e.g. repeatedly mis-clicking the profile video grid into a
             # video player). Press Escape to close any video/popup and steer it
-            # to re-orient; abort if it persists. Skipped on captcha screens
-            # (Escape would dismiss the puzzle; last_captcha is current here
-            # since mark_screenshot already ran).
+            # to re-orient; abort if it persists.
             if _LOOPBREAK_ENABLED:
                 _sig = _frame_sig(shot)
-                _on_cap = (som_engine is not None
-                           and getattr(som_engine, "last_captcha", None) is not None)
-                if _sig is not None and not _on_cap:
+                if _sig is not None:
                     _recurs = sum(1 for h in recent_sigs
                                   if _sig_hamming(h, _sig) <= _LOOPBREAK_HAM)
                     recent_sigs.append(_sig)
@@ -706,45 +664,6 @@ class TaskRunner(QThread):
                     )
                     time.sleep(_POST_ACTION_DELAY_S)
                     continue
-
-            # slide_captcha: solve a slider jigsaw. The model picked the
-            # puzzle piece + the matching gap (marks); we drag the slider
-            # HANDLE by the exact piece→gap horizontal distance — precision
-            # from image processing, the matching-gap choice from the model.
-            # Geometry (handle position) comes from the SoM captcha detection.
-            if action.get("action") == "slide_captcha":
-                det = getattr(som_engine, "last_captcha", None) if som_engine else None
-                pm = re.sub(r"\D", "", str(action.get("piece_mark", "")))
-                gm = re.sub(r"\D", "", str(action.get("gap_mark", "")))
-                ok = False
-                dist = 0.0
-                if det and mark_map and pm in mark_map and gm in mark_map:
-                    px = mark_map[pm][0]
-                    gx = mark_map[gm][0]
-                    hx, hy = det["handle"]
-                    dist = gx - px
-                    if dist > 5:
-                        try:
-                            inp.drag(hx, hy, hx + dist, hy)
-                            ok = True
-                        except Exception:
-                            ok = False
-                self.step_done.emit(step, {
-                    "action": "slide_captcha",
-                    "reasoning": (f"runner: dragged slider handle by {dist:.0f}px"
-                                  if ok else "runner: captcha solve unavailable"),
-                })
-                if not ok:
-                    pending_feedback = (
-                        "slide_captcha did not run — the puzzle wasn't detected "
-                        "or piece_mark/gap_mark were missing/invalid. If the "
-                        "puzzle image is still loading, use `wait`; otherwise "
-                        "re-read the magenta marks and pick the PIECE mark plus "
-                        "the GAP mark whose shape matches it."
-                    )
-                last_action_type = "drag"
-                time.sleep(_POST_ACTION_DELAY_S)
-                continue
 
             # Hard reject clicks that land in the OS global menu bar (macOS
             # only — `capabilities.menu_bar_max_y` is 0 on Windows so this
