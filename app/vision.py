@@ -42,8 +42,13 @@ QUOTA_MSG = "额度已用完，请输入新的令牌"
 
 # CN-ship build: pin model + provider + token regardless of env. The whole
 # point is "downloads and runs" — env vars don't exist in the user's world.
+# Default to gemini-3.5-flash: A/B tested against 3.1-pro on slider captchas
+# at 200% entry-zoom — Flash converged on a working drag distance in 5
+# attempts while Pro kept oscillating distances and never converged after
+# 18 tries. Flash also runs ~3-4x cheaper per turn, which matters across
+# long list-traversal tasks.
 if IS_CN_BUILD:
-    MODEL = os.environ.get("PHANTOM_MODEL_OVERRIDE", "gemini-3.1-pro-preview")
+    MODEL = os.environ.get("PHANTOM_MODEL_OVERRIDE", "gemini-3.5-flash")
 else:
     MODEL = os.environ.get("PHANTOM_MODEL", "claude-opus-4-7")
 ANTHROPIC_VERSION = "2023-06-01"
