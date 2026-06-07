@@ -512,14 +512,15 @@ class TaskRunner(QThread):
             # this run, reset its page zoom to default then bump it to 200%
             # so UI text/buttons / captcha pieces / gender badges are big
             # enough for the vision model to read on high-DPI displays
-            # (3840×1600 etc.). At 100 % zoom Chrome's avatars and nav
-            # labels render at ~12 px each; after the model-side resize
-            # they become unreadable. At 200% they're ~24 px which both
-            # the OCR pass and the model itself can read precisely.
-            # Chrome's zoom steps go 100 → 110 → 125 → 150 → 175 → 200%,
-            # so 5 ticks lands exactly at 200%. One-shot per run, gated to
-            # Chrome foreground so we don't zoom the Phantom-Click GUI or a
-            # terminal. macOS impl is a no-op.
+            # (3840×1600 etc.). Chrome's zoom steps go
+            # 100 → 110 → 125 → 150 → 175 → 200%, so 5 ticks lands exactly
+            # at 200%. We A/B tested this: 125% was too small (model under-
+            # estimated drag distance and got captcha-locked); 300% was too
+            # big (puzzle overflowed the model's effective field of view
+            # and success indicator missed); 200% was the sweet spot — drag
+            # estimates land inside the captcha tolerance window on the
+            # first try AND the success state stays visible inline. One-
+            # shot per run, gated to Chrome foreground. macOS impl is a no-op.
             if not entry_zoom_applied:
                 try:
                     if inp.set_chrome_entry_zoom(ticks_above_100=5):
