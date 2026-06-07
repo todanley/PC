@@ -525,6 +525,13 @@ class TaskRunner(QThread):
                 try:
                     if inp.set_chrome_entry_zoom(ticks_above_100=5):
                         entry_zoom_applied = True
+                        # Visible log so we can verify the zoom actually
+                        # fired this run — the previous symptom "default
+                        # zoom not 200%" turned out to be that Chrome
+                        # wasn't foreground at the moment the runner
+                        # checked, so this branch silently no-op'd.
+                        self.step_started.emit(
+                            step, f"Step {step}: applied Chrome 200% entry zoom")
                         time.sleep(0.35)  # let zoom transition settle
                 except Exception:
                     pass

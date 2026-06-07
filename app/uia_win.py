@@ -210,9 +210,16 @@ def collect_foreground_elements(*, max_elements=90, time_budget_s=1.0,
             if not root:
                 continue
 
-            # Chromium only: prefer the page Document subtree so we mark page
-            # content, not the browser chrome. Every other window is read whole.
-            search_root = root
+            # On Chromium, search BOTH the page Document subtree AND the
+            # whole window's chrome (tabs / bookmarks bar / address bar /
+            # toolbar buttons). Earlier we restricted to Document only to
+            # avoid Chrome-UI noise, but that meant individual bookmarks
+            # never got marked — bookmarks bar items are MenuItem controls
+            # in the browser chrome, NOT the page Document. The agent then
+            # couldn't click "Gmail" in the bookmarks bar reliably. Walking
+            # both subtrees is a small noise increase for big recall gain.
+            # Every non-Chromium window is read whole as before.
+            search_roots: list = []
             try:
                 if win32gui.GetClassName(hwnd) == _CHROME_CLASS:
                     doc = root.FindFirst(
@@ -221,18 +228,30 @@ def collect_foreground_elements(*, max_elements=90, time_budget_s=1.0,
                             mod.UIA_ControlTypePropertyId,
                             mod.UIA_DocumentControlTypeId))
                     if doc:
-                        search_root = doc
+                        search_roots.append(doc)
+                    # ALSO walk the full window root for chrome elements
+                    # (bookmarks bar, tabs, toolbar). FindAll de-dupes by
+                    # the `seen` set below so any element matched by both
+                    # passes appears only once.
+                    search_roots.append(root)
+                else:
+                    search_roots.append(root)
             except Exception:
-                pass
+                search_roots = [root]
 
-            try:
-                arr = search_root.FindAll(mod.TreeScope_Descendants, cond)
-            except Exception:
+            arrs: list = []
+            for sr in search_roots:
+                try:
+                    arrs.append(sr.FindAll(mod.TreeScope_Descendants, cond))
+                except Exception:
+                    pass
+            arrs = [a for a in arrs if a]
+            if not arrs:
                 continue
-            if not arr:
-                continue
-            n = arr.Length
-            for i in range(n):
+            # Iterate through every result array in turn.
+            for arr in arrs:
+              n = arr.Length
+              for i in range(n):
                 if time.monotonic() > deadline or len(out) >= max_elements:
                     break
                 try:
