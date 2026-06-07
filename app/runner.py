@@ -509,16 +509,20 @@ class TaskRunner(QThread):
             except Exception:
                 pass
             # Entry-zoom: the first time Chrome becomes the foreground in
-            # this run, reset its page zoom to default then bump it ~25 %
-            # so UI text/buttons are big enough for the vision model to read
-            # on high-DPI displays (3840×1600 etc.). At 100 % zoom Chrome's
-            # avatars and nav labels render at ~12 px each; after the model-
-            # side resize they become unreadable. One-shot per run, gated to
+            # this run, reset its page zoom to default then bump it to 200%
+            # so UI text/buttons / captcha pieces / gender badges are big
+            # enough for the vision model to read on high-DPI displays
+            # (3840×1600 etc.). At 100 % zoom Chrome's avatars and nav
+            # labels render at ~12 px each; after the model-side resize
+            # they become unreadable. At 200% they're ~24 px which both
+            # the OCR pass and the model itself can read precisely.
+            # Chrome's zoom steps go 100 → 110 → 125 → 150 → 175 → 200%,
+            # so 5 ticks lands exactly at 200%. One-shot per run, gated to
             # Chrome foreground so we don't zoom the Phantom-Click GUI or a
             # terminal. macOS impl is a no-op.
             if not entry_zoom_applied:
                 try:
-                    if inp.set_chrome_entry_zoom(ticks_above_100=2):
+                    if inp.set_chrome_entry_zoom(ticks_above_100=5):
                         entry_zoom_applied = True
                         time.sleep(0.35)  # let zoom transition settle
                 except Exception:
