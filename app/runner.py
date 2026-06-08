@@ -525,16 +525,25 @@ class TaskRunner(QThread):
                 try:
                     if inp.set_chrome_entry_zoom(ticks_above_100=5):
                         entry_zoom_applied = True
-                        # Visible log so we can verify the zoom actually
-                        # fired this run — the previous symptom "default
-                        # zoom not 200%" turned out to be that the browser
-                        # wasn't foreground at the moment the runner
-                        # checked, so this branch silently no-op'd. The
-                        # zoom covers any Chromium-based browser (Chrome,
-                        # Edge, Brave, Vivaldi, Opera) per the prefix
-                        # match in Input._foreground_is_chromium_browser.
-                        self.step_started.emit(
-                            step, f"Step {step}: applied browser 200% entry zoom")
+                        # Visible diagnostic so we can verify the zoom
+                        # actually fired this run — the previous "default
+                        # zoom not 200%" symptom turned out to be that the
+                        # browser wasn't foreground at the moment the
+                        # runner checked, so this branch silently no-op'd.
+                        # The zoom covers any Chromium-based browser
+                        # (Chrome, Edge, Brave, Vivaldi, Opera) per the
+                        # prefix match in
+                        # Input._foreground_is_chromium_browser. We print
+                        # to stderr (not via step_started.emit) so the
+                        # message reaches the harness console where the
+                        # → action and [进度] lines also appear —
+                        # step_started routes to the GUI panel only.
+                        try:
+                            import sys as _sys
+                            print(f"   |   ★ Step {step}: applied browser 200% entry zoom",
+                                  file=_sys.stderr, flush=True)
+                        except Exception:
+                            pass
                         time.sleep(0.35)  # let zoom transition settle
                 except Exception:
                     pass
