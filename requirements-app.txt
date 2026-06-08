@@ -25,3 +25,10 @@ pywin32>=306; sys_platform == "win32"
 # Chrome's a11y tree at the OS level (detection-free). DEV/HARNESS ONLY for
 # now — NOT yet wired into the PyInstaller bundle (COM gen hidden-imports TBD).
 comtypes>=1.2.0; sys_platform == "win32"
+
+# Bundles a static ffmpeg binary used by app/runner.py to record the screen
+# during every run (PHANTOM_RECORD=1 by default — output is <rundir>/screen.mp4,
+# H.264 in MP4 — universally playable). On macOS the runner still prefers an
+# ffmpeg already on PATH; on Windows we always use this bundled binary
+# because ffmpeg is rarely installed system-wide.
+imageio-ffmpeg>=0.4.9

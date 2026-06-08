@@ -263,15 +263,12 @@ class TaskRunner(QThread):
         # Full-screen recorder for the duration of the run; lets us replay
         # what actually happened on screen afterwards (cursor moves, click
         # landings, layout shifts) and diagnose mis-localizations.
-        #
-        # Two backends, picked per-platform inside _start_recorder:
-        #   • macOS: ffmpeg subprocess + avfoundation (uses self._recorder).
-        #   • Windows: pure-Python mss + cv2.VideoWriter on a background
-        #     thread (uses self._recorder_thread / self._recorder_stop).
-        # All None when recording is disabled or unavailable.
+        # Uses ffmpeg in both platforms (avfoundation on macOS, gdigrab on
+        # Windows), encoded as H.264 in an MP4 container — universally
+        # playable in Windows Media Player, QuickTime, VLC, browsers.
+        # Graceful 'q'-to-stdin stop ensures the moov atom is finalized.
+        # None when recording is disabled or ffmpeg isn't available.
         self._recorder: subprocess.Popen | None = None
-        self._recorder_thread = None  # threading.Thread on Windows
-        self._recorder_stop = None    # threading.Event on Windows
         self._recorder_path: str | None = None
         # Behavioral pacing: per-task rate limiter + persistent hourly cap.
         # See app/humanize.py for the threat-model rationale.
@@ -284,133 +281,100 @@ class TaskRunner(QThread):
     def _shot_path(self, step: int) -> str:
         return os.path.join(self._tmpdir, f"step_{step:02d}.png")
 
-    def _start_recorder(self) -> str | None:
-        """Start recording the entire screen to <rundir>/screen.mp4.
-        Returns the file path on success, None on any failure (which is
-        non-fatal — the run continues without a recording).
+    @staticmethod
+    def _resolve_ffmpeg() -> str | None:
+        """Return path to an ffmpeg binary, preferring system PATH then
+        the bundled imageio-ffmpeg binary. None if neither is available.
+        We bundle ffmpeg via imageio-ffmpeg (pip-installed; pulls in a
+        ~75 MB static binary) so the recorder works out-of-the-box on
+        Windows where ffmpeg is rarely on PATH."""
+        sys_ffmpeg = shutil.which("ffmpeg")
+        if sys_ffmpeg:
+            return sys_ffmpeg
+        try:
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return None
 
-        Two backends, chosen by platform:
-          • macOS: ffmpeg subprocess via avfoundation (needs ffmpeg on PATH).
-          • Windows: pure-Python mss + cv2.VideoWriter on a worker thread
-            (no external dependencies — cv2 and mss are already required
-            by the SoM pipeline). 5 fps, mp4v codec, full primary monitor.
-        Set PHANTOM_RECORD=0 to disable entirely."""
+    def _start_recorder(self) -> str | None:
+        """Start recording the entire screen to <rundir>/screen.mp4 via
+        an ffmpeg subprocess. Returns the file path on success, None on
+        any failure (which is non-fatal — the run continues without a
+        recording). Set PHANTOM_RECORD=0 to disable.
+
+        Codec is H.264 in MP4 — universally playable (Windows Media
+        Player, QuickTime, VLC, browsers). Stop is graceful: 'q' is
+        sent to ffmpeg's stdin so the moov atom is written before exit.
+        A forced kill leaves the file without a moov atom and renders
+        it unplayable, so _stop_recorder MUST run the graceful path
+        whenever possible. We previously used cv2.VideoWriter for the
+        Windows path; that finalized via writer.release() in a
+        background thread, which never ran when the run was killed by
+        timeout — producing 235 MB unrecoverable streams. ffmpeg-on-q
+        avoids that class of failure."""
         if os.environ.get("PHANTOM_RECORD", "1") == "0":
             return None
+        ffmpeg_exe = self._resolve_ffmpeg()
+        if ffmpeg_exe is None:
+            return None
         path = os.path.join(self._tmpdir, "screen.mp4")
-        # macOS: ffmpeg+avfoundation if ffmpeg is on PATH.
-        idx = _find_avfoundation_screen_index()
-        if idx is not None:
-            try:
-                self._recorder = subprocess.Popen(
-                    ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                     "-f", "avfoundation",
-                     "-framerate", "10",
-                     "-capture_cursor", "1",
-                     "-i", f"{idx}:none",
-                     "-vcodec", "libx264",
-                     "-preset", "ultrafast",
-                     "-pix_fmt", "yuv420p",
-                     path],
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            except Exception:
+        # Platform-specific input device.
+        if sys.platform == "darwin":
+            idx = _find_avfoundation_screen_index()
+            if idx is None:
                 return None
-            self._recorder_path = path
-            return path
-        # Windows (and any other platform): pure-Python mss + cv2 recorder.
-        # We poll mss in a worker thread at 5 fps and push frames into a
-        # cv2.VideoWriter. Stop is signaled via the Event below — the
-        # writer finalizes the MP4 in the worker's `finally` so a forced
-        # cancel still leaves a playable file.
+            input_args = ["-f", "avfoundation", "-framerate", "10",
+                          "-capture_cursor", "1", "-i", f"{idx}:none"]
+        elif sys.platform == "win32":
+            # gdigrab captures the entire 'desktop' (all monitors composited);
+            # framerate 5 keeps file size manageable for hour-long runs.
+            input_args = ["-f", "gdigrab", "-framerate", "5",
+                          "-draw_mouse", "1", "-i", "desktop"]
+        else:
+            return None
+        cmd = [ffmpeg_exe, "-y", "-hide_banner", "-loglevel", "error",
+               *input_args,
+               "-c:v", "libx264",
+               "-preset", "ultrafast",
+               "-pix_fmt", "yuv420p",
+               "-crf", "28",
+               path]
         try:
-            import threading
-            import mss as _mss
-            import cv2 as _cv2
-            import numpy as _np
+            self._recorder = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         except Exception:
             return None
-        try:
-            with _mss.mss() as _sct:
-                mon = _sct.monitors[1]
-                width, height = int(mon["width"]), int(mon["height"])
-        except Exception:
-            return None
-        fps = 5
-        fourcc = _cv2.VideoWriter_fourcc(*"mp4v")
-        try:
-            writer = _cv2.VideoWriter(path, fourcc, fps, (width, height))
-            if not writer.isOpened():
-                return None
-        except Exception:
-            return None
-        stop_event = threading.Event()
-
-        def _worker():
-            frame_interval = 1.0 / fps
-            try:
-                with _mss.mss() as sct:
-                    mon = sct.monitors[1]
-                    next_t = time.time()
-                    while not stop_event.is_set():
-                        try:
-                            img = sct.grab(mon)
-                            # mss returns BGRA; cv2 wants BGR
-                            frame = _np.asarray(img, dtype=_np.uint8)[:, :, :3]
-                            writer.write(frame)
-                        except Exception:
-                            pass
-                        next_t += frame_interval
-                        sleep_for = next_t - time.time()
-                        if sleep_for > 0:
-                            stop_event.wait(timeout=sleep_for)
-            finally:
-                try:
-                    writer.release()
-                except Exception:
-                    pass
-
-        thread = threading.Thread(target=_worker, daemon=True, name="PhantomRecorder")
-        thread.start()
-        self._recorder_thread = thread
-        self._recorder_stop = stop_event
         self._recorder_path = path
         return path
 
     def _stop_recorder(self):
-        # macOS path: ffmpeg subprocess.
-        if self._recorder:
-            # Send 'q' to ffmpeg's stdin so it finalizes the MP4 cleanly. Fall
-            # back to terminate/kill if it's unresponsive — better to lose the
-            # last second than leave a zombie process.
-            try:
-                self._recorder.communicate(input=b"q", timeout=8)
-            except subprocess.TimeoutExpired:
-                try:
-                    self._recorder.terminate()
-                    self._recorder.wait(timeout=3)
-                except Exception:
-                    try:
-                        self._recorder.kill()
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            self._recorder = None
+        if not self._recorder:
             return
-        # Windows path: signal the worker thread; it finalizes the MP4 in
-        # its own `finally`.
-        if self._recorder_stop is not None:
-            self._recorder_stop.set()
-        if self._recorder_thread is not None:
+        # Send 'q' to ffmpeg's stdin so it finalizes the MP4 cleanly
+        # (writes the moov atom). A forced kill skips finalization and
+        # produces an unplayable file with no moov atom (we saw 235 MB
+        # of frame data become unrecoverable this way). Fall back to
+        # terminate/kill only if 'q' is unresponsive, accepting that the
+        # file will likely be broken in that case.
+        try:
+            self._recorder.communicate(input=b"q", timeout=10)
+        except subprocess.TimeoutExpired:
             try:
-                self._recorder_thread.join(timeout=10)
+                self._recorder.terminate()
+                self._recorder.wait(timeout=3)
             except Exception:
-                pass
-        self._recorder_thread = None
-        self._recorder_stop = None
+                try:
+                    self._recorder.kill()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self._recorder = None
 
     def run(self):
         # Start full-screen recording first so even setup failures get
