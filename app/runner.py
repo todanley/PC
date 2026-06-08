@@ -527,11 +527,14 @@ class TaskRunner(QThread):
                         entry_zoom_applied = True
                         # Visible log so we can verify the zoom actually
                         # fired this run — the previous symptom "default
-                        # zoom not 200%" turned out to be that Chrome
+                        # zoom not 200%" turned out to be that the browser
                         # wasn't foreground at the moment the runner
-                        # checked, so this branch silently no-op'd.
+                        # checked, so this branch silently no-op'd. The
+                        # zoom covers any Chromium-based browser (Chrome,
+                        # Edge, Brave, Vivaldi, Opera) per the prefix
+                        # match in Input._foreground_is_chromium_browser.
                         self.step_started.emit(
-                            step, f"Step {step}: applied Chrome 200% entry zoom")
+                            step, f"Step {step}: applied browser 200% entry zoom")
                         time.sleep(0.35)  # let zoom transition settle
                 except Exception:
                     pass

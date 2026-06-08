@@ -291,32 +291,50 @@ class Input:
         equal zoom_in. Wheel-based so it never risks the Magnifier."""
         self._wheel_zoom(steps, -1)
 
+    @staticmethod
+    def _foreground_is_chromium_browser() -> bool:
+        """True if the OS foreground window is any Chromium-based browser:
+        Chrome, Edge, Brave, Vivaldi, Opera. They all use the same window-
+        class prefix `Chrome_WidgetWin_` (because Edge etc. fork Chromium
+        directly), but minor versions occasionally bump the suffix from
+        `_1` to `_2`. Prefix-matching covers everything and avoids
+        per-browser allowlists. Returns False when the foreground is a
+        non-browser window (Phantom-Click GUI, terminal, IDE, native app).
+        Never raises."""
+        try:
+            import win32gui
+            hwnd = win32gui.GetForegroundWindow()
+            if not hwnd or not win32gui.IsWindowVisible(hwnd):
+                return False
+            cls = win32gui.GetClassName(hwnd) or ""
+            return cls.startswith("Chrome_WidgetWin_")
+        except Exception:
+            return False
+
     def set_chrome_entry_zoom(self, ticks_above_100: int = 2) -> bool:
-        """Reset Chrome's page zoom to default and then bump it up by
-        `ticks_above_100` zoom levels. Chrome levels are 100→110→125→150 …,
-        so the default 2 ticks lands at ~125%.
+        """Reset the browser's page zoom to default and then bump it up by
+        `ticks_above_100` zoom levels. Chrome / Edge / Brave levels are all
+        100→110→125→150 …, so the default 2 ticks lands at ~125%.
 
         High-DPI displays (3840×1600 ultrawides, 4K laptops, retina) pack so
-        many physical pixels into the viewport that Chrome at 100% zoom
+        many physical pixels into the viewport that the browser at 100% zoom
         renders nav text and avatars at ~10-14 px each. After the screenshot
         is resized for the model's vision encoder, those become unreadable
         blobs and the model resorts to coordinate guessing. Bumping zoom at
         entry makes UI text and buttons big enough for the vision model to
         read precisely.
 
-        Reset-then-bump is deliberate: Chrome remembers per-site zoom, so a
-        fresh session may already be at 110% / 125% from a previous run.
+        Reset-then-bump is deliberate: the browser remembers per-site zoom,
+        so a fresh session may already be at 110% / 125% from a previous run.
         Without reset, stacking zoom_in pushes past 150% and breaks layout.
 
-        Returns True iff zoom was actually dispatched (foreground was Chrome).
-        Best-effort; never raises.
-        """
+        Returns True iff zoom was actually dispatched (foreground was a
+        Chromium-based browser — Chrome, Edge, Brave, etc.).
+        Best-effort; never raises."""
         try:
-            import win32gui
-            hwnd = win32gui.GetForegroundWindow()
-            if not hwnd or win32gui.GetClassName(hwnd) != "Chrome_WidgetWin_1":
+            if not self._foreground_is_chromium_browser():
                 return False
-            # Reset to 100% (Ctrl+0 — handles Chrome's remembered per-site zoom).
+            # Reset to 100% (Ctrl+0 — handles the browser's remembered per-site zoom).
             self.press_combo(f"{self._ctrl_key()}+0")
             time.sleep(0.12)
             # Then bump up by the requested number of zoom levels.
@@ -327,28 +345,24 @@ class Input:
             return False
 
     def maximize_foreground_window_if_chrome(self) -> bool:
-        """If the OS foreground window is a Chrome window that isn't already
-        maximized, maximize it via Win32 ShowWindow(SW_MAXIMIZE). Returns True
-        iff a maximize was actually dispatched.
+        """If the OS foreground window is a Chromium-based browser
+        (Chrome / Edge / Brave / Vivaldi / Opera) that isn't already
+        maximized, maximize it via Win32 ShowWindow(SW_MAXIMIZE). Returns
+        True iff a maximize was actually dispatched.
 
         Takes the maximize decision out of the model's hands: rather than
         relying on the SYSTEM_PROMPT bullet (which gemini-3.5-flash and other
         instruction-following-light models can skip), the runner just enforces
-        it. Limited to Chrome windows so we never accidentally maximize the
+        it. Limited to browser windows so we never accidentally maximize the
         Phantom-Click GUI / terminal / IDE that happens to be the foreground.
         Never raises.
         """
         try:
             import win32gui
             import win32con
+            if not self._foreground_is_chromium_browser():
+                return False
             hwnd = win32gui.GetForegroundWindow()
-            if not hwnd or not win32gui.IsWindowVisible(hwnd):
-                return False
-            # Chrome's top-level windows use this class on every release we
-            # support. If the foreground is something else (Phantom-Click,
-            # an IDE, the desktop, a captcha popup), we leave it alone.
-            if win32gui.GetClassName(hwnd) != "Chrome_WidgetWin_1":
-                return False
             # IsZoomed → bool: window is currently maximized.
             if ctypes.windll.user32.IsZoomed(hwnd):
                 return False
