@@ -221,22 +221,6 @@ _LIST_TRAVERSAL_TASK = re.compile(
     r"(\ball\b|\bevery\b|\beach\b|所有|全部|整个|每(?:一个|[个条位名]))",
     re.IGNORECASE,
 )
-# Silent dispatch suppressor — see _click_bucket. Two consecutive clicks at
-# the same 24-px bucket are almost always the model second-guessing a toggle
-# button and would undo the prior click. The runner drops the 2nd dispatch
-# silently so toggle state is preserved. The model is told nothing.
-_CLICK_BUCKET_PX = 24
-
-
-def _click_bucket(action: dict) -> tuple[int, int] | None:
-    if action.get("action") not in ("click", "double_click"):
-        return None
-    x, y = action.get("x"), action.get("y")
-    if x is None or y is None:
-        return None
-    return (round(x / _CLICK_BUCKET_PX), round(y / _CLICK_BUCKET_PX))
-
-
 class TaskRunner(QThread):
     step_started = Signal(int, str)
     step_done = Signal(int, dict)
@@ -276,12 +260,18 @@ class TaskRunner(QThread):
         # pixels (full-image mean ~2, below noise) yet changes that region
         # massively (region mean ~16). None until the first scroll.
         self._last_scroll_target: tuple[float, float] | None = None
-        # ffmpeg subprocess that records the entire screen for the duration
-        # of the run; lets us replay what actually happened on screen
-        # afterwards (cursor moves, click landings, layout shifts) and
-        # diagnose mis-localizations. None when recording is disabled or
-        # ffmpeg isn't available.
+        # Full-screen recorder for the duration of the run; lets us replay
+        # what actually happened on screen afterwards (cursor moves, click
+        # landings, layout shifts) and diagnose mis-localizations.
+        #
+        # Two backends, picked per-platform inside _start_recorder:
+        #   • macOS: ffmpeg subprocess + avfoundation (uses self._recorder).
+        #   • Windows: pure-Python mss + cv2.VideoWriter on a background
+        #     thread (uses self._recorder_thread / self._recorder_stop).
+        # All None when recording is disabled or unavailable.
         self._recorder: subprocess.Popen | None = None
+        self._recorder_thread = None  # threading.Thread on Windows
+        self._recorder_stop = None    # threading.Event on Windows
         self._recorder_path: str | None = None
         # Behavioral pacing: per-task rate limiter + persistent hourly cap.
         # See app/humanize.py for the threat-model rationale.
@@ -295,55 +285,132 @@ class TaskRunner(QThread):
         return os.path.join(self._tmpdir, f"step_{step:02d}.png")
 
     def _start_recorder(self) -> str | None:
-        """Start ffmpeg recording the screen to <rundir>/screen.mp4.
+        """Start recording the entire screen to <rundir>/screen.mp4.
         Returns the file path on success, None on any failure (which is
-        non-fatal — the run continues without a recording)."""
+        non-fatal — the run continues without a recording).
+
+        Two backends, chosen by platform:
+          • macOS: ffmpeg subprocess via avfoundation (needs ffmpeg on PATH).
+          • Windows: pure-Python mss + cv2.VideoWriter on a worker thread
+            (no external dependencies — cv2 and mss are already required
+            by the SoM pipeline). 5 fps, mp4v codec, full primary monitor.
+        Set PHANTOM_RECORD=0 to disable entirely."""
         if os.environ.get("PHANTOM_RECORD", "1") == "0":
             return None
-        idx = _find_avfoundation_screen_index()
-        if idx is None:
-            return None
         path = os.path.join(self._tmpdir, "screen.mp4")
+        # macOS: ffmpeg+avfoundation if ffmpeg is on PATH.
+        idx = _find_avfoundation_screen_index()
+        if idx is not None:
+            try:
+                self._recorder = subprocess.Popen(
+                    ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                     "-f", "avfoundation",
+                     "-framerate", "10",
+                     "-capture_cursor", "1",
+                     "-i", f"{idx}:none",
+                     "-vcodec", "libx264",
+                     "-preset", "ultrafast",
+                     "-pix_fmt", "yuv420p",
+                     path],
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except Exception:
+                return None
+            self._recorder_path = path
+            return path
+        # Windows (and any other platform): pure-Python mss + cv2 recorder.
+        # We poll mss in a worker thread at 5 fps and push frames into a
+        # cv2.VideoWriter. Stop is signaled via the Event below — the
+        # writer finalizes the MP4 in the worker's `finally` so a forced
+        # cancel still leaves a playable file.
         try:
-            self._recorder = subprocess.Popen(
-                ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                 "-f", "avfoundation",
-                 "-framerate", "10",
-                 "-capture_cursor", "1",
-                 "-i", f"{idx}:none",
-                 "-vcodec", "libx264",
-                 "-preset", "ultrafast",
-                 "-pix_fmt", "yuv420p",
-                 path],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            import threading
+            import mss as _mss
+            import cv2 as _cv2
+            import numpy as _np
         except Exception:
             return None
+        try:
+            with _mss.mss() as _sct:
+                mon = _sct.monitors[1]
+                width, height = int(mon["width"]), int(mon["height"])
+        except Exception:
+            return None
+        fps = 5
+        fourcc = _cv2.VideoWriter_fourcc(*"mp4v")
+        try:
+            writer = _cv2.VideoWriter(path, fourcc, fps, (width, height))
+            if not writer.isOpened():
+                return None
+        except Exception:
+            return None
+        stop_event = threading.Event()
+
+        def _worker():
+            frame_interval = 1.0 / fps
+            try:
+                with _mss.mss() as sct:
+                    mon = sct.monitors[1]
+                    next_t = time.time()
+                    while not stop_event.is_set():
+                        try:
+                            img = sct.grab(mon)
+                            # mss returns BGRA; cv2 wants BGR
+                            frame = _np.asarray(img, dtype=_np.uint8)[:, :, :3]
+                            writer.write(frame)
+                        except Exception:
+                            pass
+                        next_t += frame_interval
+                        sleep_for = next_t - time.time()
+                        if sleep_for > 0:
+                            stop_event.wait(timeout=sleep_for)
+            finally:
+                try:
+                    writer.release()
+                except Exception:
+                    pass
+
+        thread = threading.Thread(target=_worker, daemon=True, name="PhantomRecorder")
+        thread.start()
+        self._recorder_thread = thread
+        self._recorder_stop = stop_event
         self._recorder_path = path
         return path
 
     def _stop_recorder(self):
-        if not self._recorder:
-            return
-        # Send 'q' to ffmpeg's stdin so it finalizes the MP4 cleanly. Fall
-        # back to terminate/kill if it's unresponsive — better to lose the
-        # last second than leave a zombie process.
-        try:
-            self._recorder.communicate(input=b"q", timeout=8)
-        except subprocess.TimeoutExpired:
+        # macOS path: ffmpeg subprocess.
+        if self._recorder:
+            # Send 'q' to ffmpeg's stdin so it finalizes the MP4 cleanly. Fall
+            # back to terminate/kill if it's unresponsive — better to lose the
+            # last second than leave a zombie process.
             try:
-                self._recorder.terminate()
-                self._recorder.wait(timeout=3)
-            except Exception:
+                self._recorder.communicate(input=b"q", timeout=8)
+            except subprocess.TimeoutExpired:
                 try:
-                    self._recorder.kill()
+                    self._recorder.terminate()
+                    self._recorder.wait(timeout=3)
                 except Exception:
-                    pass
-        except Exception:
-            pass
-        self._recorder = None
+                    try:
+                        self._recorder.kill()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            self._recorder = None
+            return
+        # Windows path: signal the worker thread; it finalizes the MP4 in
+        # its own `finally`.
+        if self._recorder_stop is not None:
+            self._recorder_stop.set()
+        if self._recorder_thread is not None:
+            try:
+                self._recorder_thread.join(timeout=10)
+            except Exception:
+                pass
+        self._recorder_thread = None
+        self._recorder_stop = None
 
     def run(self):
         # Start full-screen recording first so even setup failures get
@@ -402,20 +469,6 @@ class TaskRunner(QThread):
         step = 0
         last_action_type: str = "click"
         actions_since_break: int = 0
-        last_bucket: tuple[int, int] | None = None
-        # True when the most recent dispatched click was detected by the
-        # post-action verifier as a no-op. Used to disable the same-bucket
-        # suppressor on the very next turn so the model can retry a missed
-        # click at a slightly different coord without being silenced. Reset
-        # whenever a click DOES change the screen (or any non-click action
-        # runs).
-        last_click_was_noop = False
-        # Counts consecutive turns where the bucket suppressor fired. After
-        # `_STUCK_LIMIT` of these in a row, the model is locked into a coord
-        # the runner believes is wrong — abort the run with a pointer to the
-        # recording so the user / debugger can replay what happened.
-        consecutive_stuck = 0
-        _STUCK_LIMIT = 3
         pending_feedback: str | None = None
         # Last click coords (logical px) — used as a smart fallback for
         # scrolls when the model didn't pass scroll_x/scroll_y. If the
@@ -430,12 +483,6 @@ class TaskRunner(QThread):
             max_steps = int(os.environ.get("PHANTOM_MAX_STEPS", "0") or 0)
         except ValueError:
             max_steps = 0
-        # The same-bucket repeat-click suppressor protects toggle state, but on
-        # a list task (e.g. unfollowing down a roster) consecutive legitimate
-        # clicks can land in the same bucket after the list re-renders, and the
-        # suppressor would silently drop them. PHANTOM_SUPPRESS_REPEAT_CLICKS=0
-        # disables it for those runs. Default on (production behavior).
-        suppress_repeats = os.environ.get("PHANTOM_SUPPRESS_REPEAT_CLICKS", "1") != "0"
         # Entry-zoom: one-shot per run, latched the first time Chrome becomes
         # the OS foreground. We reset zoom to 100 % then bump to ~125 % so UI
         # text and buttons are big enough for the vision model to read on
@@ -720,70 +767,11 @@ class TaskRunner(QThread):
                     time.sleep(_POST_ACTION_DELAY_S)
                     continue
 
-            new_bucket = _click_bucket(action)
-            # Suppress same-bucket repeats ONLY when the prior click actually
-            # had an effect — the goal is preserving the toggle state of a
-            # button that successfully toggled. If the previous click was a
-            # detected no-op (post-action verification flagged it), the
-            # current attempt is a RETRY of a missed click, not a toggle
-            # undo, so we let it through.
-            if (suppress_repeats and new_bucket is not None and new_bucket == last_bucket
-                    and not last_click_was_noop):
-                self.step_done.emit(step, {
-                    "action": "suppressed_repeat_click",
-                    "x": action.get("x"), "y": action.get("y"),
-                    "reasoning": "runner: same-bucket click as previous turn — dropped to preserve toggle state.",
-                })
-                consecutive_stuck += 1
-                if consecutive_stuck >= _STUCK_LIMIT:
-                    px, py = action.get("x"), action.get("y")
-                    rec = self._recorder_path or "(no recording)"
-                    self.failed.emit(
-                        f"stuck: model emitted same-bucket click ({px},{py}) "
-                        f"{consecutive_stuck} turns in a row. "
-                        f"Run dir: {self._tmpdir}  Video: {rec}"
-                    )
-                    return
-                px, py = action.get("x"), action.get("y")
-                mk = action.get("mark")
-                if mk is not None:
-                    # SoM mode: the model is choosing tags, not coordinates, so
-                    # telling it "don't reuse (x,y)" is meaningless — it'll just
-                    # re-pick the same tag (this is exactly how it got stuck in
-                    # field testing). Name the dead tag and forbid it.
-                    pending_feedback = (
-                        f"Clicking mark [{mk}] changed nothing — that tag is NOT "
-                        "the control you intended (it may be a label, a decorative "
-                        "box, or a non-clickable region). Do NOT pick mark "
-                        f"[{mk}] again. Look at the screenshot and choose a "
-                        "DIFFERENT tag — the real target (e.g. the 关注/following "
-                        "COUNT in a profile header) may be a small number you "
-                        "have to read carefully. If no tag sits on it, give x/y "
-                        "on that exact spot instead."
-                    )
-                else:
-                    pending_feedback = (
-                        f"your previous click at ({px},{py}) didn't change the screen "
-                        "(likely missed the target or the element wasn't actually clickable). "
-                        "Re-localize from the current screenshot — the layout may have shifted "
-                        "since your last attempt — and pick a DIFFERENT coordinate or element. "
-                        "Don't repeat the same coordinate."
-                    )
-                time.sleep(_POST_ACTION_DELAY_S)
-                continue
-            # Click landed (or non-click action) — reset the stuck counter.
-            consecutive_stuck = 0
-
             try:
                 self._dispatch(inp, action, scroll_fallback=last_click_xy)
             except Exception as e:
                 self.failed.emit(f"action {action.get('action')!r} failed: {e}")
                 return
-
-            # Track the click only if it actually dispatched. Non-click actions
-            # (key, scroll, wait, done) reset the streak so the next click can
-            # land legitimately.
-            last_bucket = new_bucket
 
             # Remember last click point for the smart scroll fallback. We
             # update on click/double_click only — scrolls inherit the prior
@@ -896,10 +884,7 @@ class TaskRunner(QThread):
                                 # click target for the smart-scroll fallback.
                                 last_click_xy = (rx, ry)
                                 break
-                        if rescued:
-                            last_click_was_noop = False
-                        else:
-                            last_click_was_noop = True
+                        if not rescued:
                             mk = action.get("mark")
                             mark_note = (
                                 f"(You selected mark [{mk}]; it is NOT on a working "
@@ -925,12 +910,6 @@ class TaskRunner(QThread):
                                 "to click. Do not increment progress for the "
                                 "click itself if it failed."
                             )
-                    else:
-                        last_click_was_noop = False
-            else:
-                # Non-click action — clear the noop flag so a future click
-                # gets the bucket-suppressor protection back.
-                last_click_was_noop = False
 
             # Scroll-effect verification. A scroll that doesn't change the
             # screen usually means the wheel event went to a region that
