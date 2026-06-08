@@ -5,10 +5,11 @@ import threading
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import QDateTime
 from PySide6.QtWidgets import (
-    QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel, QListWidget,
-    QListWidgetItem, QMainWindow, QPlainTextEdit, QPushButton, QScrollArea,
-    QSplitter, QVBoxLayout, QWidget,
+    QButtonGroup, QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
+    QListWidget, QListWidgetItem, QMainWindow, QPlainTextEdit, QPushButton,
+    QRadioButton, QScrollArea, QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
 
 from . import wallet
@@ -199,6 +200,17 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(DARK_QSS)
         self._runner: TaskRunner | None = None
         self._system_prompt: str = ""
+        # Scheduling: when "定时重复" mode is selected, _schedule_timer fires
+        # every _schedule_interval_min minutes and re-launches the same task.
+        # _schedule_active is True for the whole scheduled session (across
+        # multiple runs); the Stop button cancels both the in-flight run AND
+        # the next-fire timer. _schedule_run_count tracks how many runs have
+        # fired in this session purely for logging — there's no upper cap.
+        self._schedule_timer: QTimer | None = None
+        self._schedule_active: bool = False
+        self._schedule_interval_min: int = 5
+        self._schedule_task: str = ""
+        self._schedule_run_count: int = 0
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -238,6 +250,45 @@ class MainWindow(QMainWindow):
         )
         self.task_input.setFixedHeight(152)
         layout.addWidget(self.task_input)
+
+        # Mode row: single-run vs scheduled-repeat. Two radio buttons in
+        # a button group; selecting "定时重复" reveals the interval spinner
+        # and the schedule_note label. The Run button's label changes to
+        # "▶ 开始定时" so the user knows clicking it starts a recurring
+        # job, not a one-off.
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(14)
+        self._mode_group = QButtonGroup(self)
+        self.mode_once_btn = QRadioButton("单次运行")
+        self.mode_once_btn.setChecked(True)
+        self.mode_sched_btn = QRadioButton("定时重复")
+        self._mode_group.addButton(self.mode_once_btn, 0)
+        self._mode_group.addButton(self.mode_sched_btn, 1)
+        self._mode_group.idToggled.connect(self._on_mode_changed)
+        mode_row.addWidget(self.mode_once_btn)
+        mode_row.addWidget(self.mode_sched_btn)
+        # Interval picker — only visible in schedule mode.
+        self.interval_label = QLabel("每")
+        self.interval_label.setStyleSheet("color: #8b9099;")
+        self.interval_spin = QSpinBox()
+        self.interval_spin.setRange(1, 1440)  # 1 minute to 24 hours
+        self.interval_spin.setValue(5)
+        self.interval_spin.setSuffix(" 分钟")
+        self.interval_spin.setFixedWidth(120)
+        self.interval_label.hide()
+        self.interval_spin.hide()
+        mode_row.addWidget(self.interval_label)
+        mode_row.addWidget(self.interval_spin)
+        mode_row.addStretch(1)
+        layout.addLayout(mode_row)
+
+        # When scheduled mode is active, this label shows the next-fire
+        # countdown / status (e.g. "下次运行：14:23:05"). Hidden in single-run
+        # mode and during the in-flight run itself.
+        self.schedule_note = QLabel("")
+        self.schedule_note.setStyleSheet("color: #5fa8f5; font-size: 22px;")
+        self.schedule_note.hide()
+        layout.addWidget(self.schedule_note)
 
         # Controls row
         ctrl_row = QHBoxLayout()
@@ -354,6 +405,22 @@ class MainWindow(QMainWindow):
         self._last_remaining = remaining
         self._refresh_balance_label()
 
+    def _on_mode_changed(self, mode_id: int, checked: bool):
+        """Toggle the interval picker + schedule note based on the selected
+        mode. Called twice per user click (the deselected radio also emits
+        with checked=False); we only act on the freshly-checked side."""
+        if not checked:
+            return
+        scheduled = (mode_id == 1)
+        self.interval_label.setVisible(scheduled)
+        self.interval_spin.setVisible(scheduled)
+        # Update button label so the user knows what clicking Run will do.
+        self.run_btn.setText("▶  开始定时" if scheduled else "▶  运行")
+        # Clear the schedule note when switching back to one-off mode.
+        if not scheduled:
+            self.schedule_note.hide()
+            self.schedule_note.setText("")
+
     def _on_run(self):
         task = self.task_input.toPlainText().strip()
         if not task:
@@ -368,12 +435,40 @@ class MainWindow(QMainWindow):
                 self._append_log("[!] 未输入令牌，无法运行。")
                 return
 
+        # Capture scheduling settings at start time so changing the spinner
+        # mid-session doesn't drift the schedule.
+        scheduled = self.mode_sched_btn.isChecked()
+        if scheduled and not self._schedule_active:
+            self._schedule_active = True
+            self._schedule_interval_min = self.interval_spin.value()
+            self._schedule_task = task
+            self._schedule_run_count = 0
+            self._append_log(
+                f"⏱  定时模式已开启：每 {self._schedule_interval_min} 分钟运行一次。"
+            )
+        self._launch_run(task)
+
+    def _launch_run(self, task: str):
+        """Start a single TaskRunner cycle. Used by both the manual Run
+        click and the scheduled re-fire."""
         self.log.clear()
         self._clear_conversation()
-        self._append_log(f"▶  开始：{task}")
+        self._schedule_run_count += 1 if self._schedule_active else 0
+        header = (
+            f"▶  开始（第 {self._schedule_run_count} 次定时运行）：{task}"
+            if self._schedule_active else f"▶  开始：{task}"
+        )
+        self._append_log(header)
         self.run_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.task_input.setReadOnly(True)
+        # Lock the mode + interval controls during any run, scheduled or not,
+        # so the user can't change them mid-execution.
+        self.mode_once_btn.setEnabled(False)
+        self.mode_sched_btn.setEnabled(False)
+        self.interval_spin.setEnabled(False)
+        # Hide the next-run countdown while a run is in flight.
+        self.schedule_note.hide()
 
         self._runner = TaskRunner(task)
         self._runner.step_started.connect(self._on_step_started)
@@ -385,6 +480,17 @@ class MainWindow(QMainWindow):
         self._runner.start()
 
     def _on_stop(self):
+        # In scheduled mode, Stop ends the whole recurring session — both
+        # the in-flight run AND the next-fire timer. Without that the timer
+        # would keep firing fresh runs after the user thought they stopped.
+        if self._schedule_active:
+            self._schedule_active = False
+            if self._schedule_timer is not None:
+                self._schedule_timer.stop()
+                self._schedule_timer = None
+            self.schedule_note.hide()
+            self.schedule_note.setText("")
+            self._append_log("⏱  定时模式已停止。")
         if self._runner:
             self._runner.cancel()
             self._append_log("[已请求停止 — 正在结束当前步骤…]")
@@ -488,6 +594,7 @@ class MainWindow(QMainWindow):
     def _on_finished_ok(self, msg: str):
         self._append_log(f"✓  完成：{msg}")
         self._reset_buttons()
+        self._maybe_schedule_next()
 
     def _on_failed(self, msg: str):
         # Wallet/quota messages: show verbatim and prompt for a (new) token so
@@ -514,8 +621,57 @@ class MainWindow(QMainWindow):
             clean = "卡住了，已自动停止"
         self._append_log(f"✗  {clean}")
         self._reset_buttons()
+        # Scheduling keeps firing through failures — a transient bridge
+        # error or one bad run shouldn't kill a long-running schedule. The
+        # ONLY exception is wallet/quota messages (`额度`/`请输入`/`令牌`):
+        # those return early at the top of _on_failed BEFORE reaching here,
+        # so we don't need to special-case them.
+        self._maybe_schedule_next()
+
+    def _maybe_schedule_next(self):
+        """If scheduled mode is active, arm a single-shot QTimer for
+        _schedule_interval_min minutes from now. The timer relaunches the
+        SAME task captured at session start (_schedule_task), so editing
+        the input mid-session doesn't change what fires. Called from both
+        finished_ok and failed so the schedule survives transient errors."""
+        if not self._schedule_active:
+            return
+        interval_ms = self._schedule_interval_min * 60 * 1000
+        # Re-arm: cancel any prior timer (defensive — _on_run should only
+        # fire after the previous run finished, but Qt's signal ordering
+        # has bitten us before).
+        if self._schedule_timer is not None:
+            self._schedule_timer.stop()
+        self._schedule_timer = QTimer(self)
+        self._schedule_timer.setSingleShot(True)
+        self._schedule_timer.timeout.connect(self._on_schedule_fire)
+        self._schedule_timer.start(interval_ms)
+        next_run = QDateTime.currentDateTime().addMSecs(interval_ms)
+        self.schedule_note.setText(
+            f"⏱  定时模式：下次运行 {next_run.toString('HH:mm:ss')}"
+            f"（共已运行 {self._schedule_run_count} 次）"
+        )
+        self.schedule_note.show()
+        # Keep the Stop button enabled even between runs so the user can
+        # cancel the schedule without waiting for the next run to start.
+        self.stop_btn.setEnabled(True)
+        self.run_btn.setEnabled(False)
+
+    def _on_schedule_fire(self):
+        """The repeat timer fired. Re-launch the captured task if we're
+        still in scheduled mode (the user may have hit Stop between runs)."""
+        if not self._schedule_active:
+            return
+        self._launch_run(self._schedule_task)
 
     def _reset_buttons(self):
         self.run_btn.setEnabled(True)
         self.stop_btn.setEnabled(False)
         self.task_input.setReadOnly(False)
+        # Only unlock the mode + interval controls when no schedule is
+        # active — between scheduled runs the user shouldn't be able to
+        # flip modes (would orphan the timer).
+        if not self._schedule_active:
+            self.mode_once_btn.setEnabled(True)
+            self.mode_sched_btn.setEnabled(True)
+            self.interval_spin.setEnabled(True)
