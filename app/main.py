@@ -1,51 +1,39 @@
 """Phantom-Click desktop app entry point."""
 import os
 import sys
-import threading
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from . import wallet
-from .build_config import BRIDGE_URL, IS_CN_BUILD
+from .build_config import IS_CN_BUILD
 from .ui import MainWindow
 
 
-def _maybe_fetch_trial_token(win: MainWindow) -> None:
-    """First-launch trial-token bootstrap (CN-ship builds only).
+def _prompt_token_on_launch_if_missing(win: MainWindow) -> None:
+    """If this is a CN-ship build and the user has no token stored locally,
+    show the token-input modal immediately after the window appears. This
+    is the first-launch flow for distributed builds: every new install
+    starts with no quota and no token (operator manually mints tokens via
+    worker/issue-token.sh and hands them out), so the very first thing
+    the user must do is paste theirs in.
 
-    If the app has no token stored locally AND the bridge URL is baked in,
-    spin a background thread to fetch a $0.10 trial token from the bridge's
-    /mint-trial endpoint. On success, store it and refresh the balance
-    label. Silent on failure — the user just sees the normal 'token not
-    set' state and can paste an operator-issued token.
-
-    Runs in a thread so the UI never blocks on a slow network. Bridge is
-    rate-limited per IP, so spamming app launches doesn't drain the pool."""
-    if not IS_CN_BUILD or not BRIDGE_URL:
+    We schedule the prompt after a short delay so the main window has a
+    chance to render first — the modal is then visibly anchored to the
+    app, not floating in the dark with nothing behind it. Skipped during
+    PHANTOM_AUTORUN (test/CI runs that bring their own token via env)."""
+    if not IS_CN_BUILD:
         return
     if wallet.get_token():
-        return  # already have one — leave it alone
+        return
+    if os.environ.get("PHANTOM_AUTORUN") == "1":
+        return
 
-    def _worker():
-        tok, err = wallet.fetch_trial_token(BRIDGE_URL)
-        if tok:
-            wallet.set_token(tok)
-            # Refresh the balance label on the Qt main thread.
-            QTimer.singleShot(0, win._refresh_balance_label)
-            QTimer.singleShot(
-                0,
-                lambda: win._append_log(
-                    "🎁  已为您领取 $0.10 试用额度，可立即开始测试。",
-                ),
-            )
-        # Errors deliberately silent — failure just means the user falls
-        # through to the normal "enter your token" path. Log to stderr
-        # though so an operator running the dev build can see what happened.
-        elif err:
-            print(f"[trial-token fetch] {err}", file=sys.stderr, flush=True)
+    def _ask():
+        win._prompt_token(
+            "欢迎使用噜噜机器人。\n首次启动还没有令牌，请向管理员索取后输入：")
 
-    threading.Thread(target=_worker, daemon=True, name="TrialTokenFetch").start()
+    QTimer.singleShot(600, _ask)
 
 
 def _wire_autorun(win: MainWindow) -> None:
@@ -104,7 +92,7 @@ def main():
     win = MainWindow()
     _install_clean_shutdown(app, win)
     _wire_autorun(win)
-    _maybe_fetch_trial_token(win)
+    _prompt_token_on_launch_if_missing(win)
     win.show()
     sys.exit(app.exec())
 
