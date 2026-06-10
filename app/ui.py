@@ -30,7 +30,17 @@ def _replay_move_to(x: float, y: float):
     threading.Thread(target=go, daemon=True).start()
 
 
+# Font stack: one sans family across the entire UI so Chinese + Latin
+# glyphs come from the SAME face, not whatever Windows picks per character.
+# Microsoft YaHei UI is the Windows 10/11 default Chinese UI font; PingFang
+# SC covers macOS; the rest are graceful fallbacks. The previous QSS mixed
+# `SF Mono / Menlo / Consolas` for the log + replay buttons, but those mono
+# families have no Chinese glyph coverage on Windows so CJK characters fell
+# back to MS Gothic / SimSun while the surrounding UI stayed on YaHei —
+# that's the visible font mismatch the user noticed. Dropping the mono
+# overrides and using one sans family everywhere fixes it.
 DARK_QSS = """
+* { font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
 QMainWindow, QWidget { background: #0f1115; color: #e6e8eb; }
 QLabel { color: #e6e8eb; font-size: 27px; }
 QPlainTextEdit {
@@ -56,14 +66,12 @@ QPushButton#linkBtn:hover { color: #a8baff; }
 QPushButton#replayBtn {
     background: #2a2f38; color: #c9cdd4; border: 1px solid #3a3f48;
     border-radius: 6px; padding: 6px 12px; font-weight: 500; font-size: 14px;
-    font-family: "SF Mono", Menlo, Consolas, monospace;
 }
 QPushButton#replayBtn:hover { background: #353b46; color: #e6e8eb; }
 QPushButton#replayBtn:pressed { background: #1f242c; }
 QListWidget {
     background: #1a1d23; border: 1px solid #2a2f38; border-radius: 8px;
-    padding: 6px; color: #c9cdd4; font-family: "SF Mono", Menlo, Consolas, monospace;
-    font-size: 16px;
+    padding: 6px; color: #c9cdd4; font-size: 16px;
 }
 QFrame#turnCard {
     background: #1a1d23; border: 1px solid #2a2f38; border-radius: 8px;
@@ -71,7 +79,7 @@ QFrame#turnCard {
 QLabel#turnHeader { color: #8b9099; font-size: 14px; font-weight: 600; }
 QLabel#sectionLabel { color: #8b9099; font-size: 13px; font-weight: 600; }
 QLabel#monoText {
-    color: #c9cdd4; font-family: "SF Mono", Menlo, Consolas, monospace;
+    color: #c9cdd4;
     font-size: 14px; background: #0f1115; padding: 6px; border-radius: 4px;
 }
 QScrollArea { background: #0f1115; border: none; }
@@ -377,9 +385,10 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(14)
 
-        # Title
+        # Title — pin the family explicitly so Qt doesn't fall back to a
+        # different Chinese face just for the big bold heading.
         title = QLabel("噜噜机器人")
-        title.setFont(QFont("", 49, QFont.Bold))
+        title.setFont(QFont("Microsoft YaHei UI", 49, QFont.Bold))
         layout.addWidget(title)
 
         sub = QLabel("告诉我要做什么，我来替你操作电脑。")
