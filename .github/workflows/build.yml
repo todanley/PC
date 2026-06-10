@@ -70,3 +70,112 @@ jobs:
         with:
           draft: true
           files: ${{ matrix.artifact_path }}
+
+  # ──────────────────────────────────────────────────────────────────────
+  # publish: only runs on a tag push. Pulls both OS artifacts from the
+  # build job, uploads them to the public R2 bucket under TWO keys each
+  # (versioned + `-latest` alias), writes version.json so the marketing
+  # site can read the current release, then deploys the static site to
+  # Cloudflare Pages. Direct downloads land at:
+  #   https://downloads.z1nexusn1.org/lulurobot-{mac,win}-vX.Y.Z.{zip,exe}
+  #   https://downloads.z1nexusn1.org/lulurobot-{mac,win}-latest.{zip,exe}
+  # The marketing site always links to `-latest`, so no rewrite of the
+  # site is needed for a routine release.
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    name: publish-r2-pages
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      R2_BUCKET: phantom-click-downloads
+      PAGES_PROJECT: lulurobot-site
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download mac artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phantom-click-mac
+          path: artifacts/mac/
+
+      - name: Download win artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: phantom-click-win
+          path: artifacts/win/
+
+      - name: Resolve version from tag
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      # Two upload passes each (versioned + latest alias). Wrangler is already
+      # the tool we use for the worker — same auth model, same CLI surface,
+      # one fewer dependency to manage in CI.
+      - name: Upload Mac zip to R2 (versioned)
+        run: |
+          MAC_ZIP=$(find artifacts/mac -type f -name '*.zip' | head -1)
+          [ -n "$MAC_ZIP" ] || { echo "no mac zip"; exit 1; }
+          npx --yes wrangler r2 object put \
+            "$R2_BUCKET/lulurobot-mac-v${{ steps.ver.outputs.version }}.zip" \
+            --file "$MAC_ZIP" --content-type application/zip --remote
+          npx --yes wrangler r2 object put \
+            "$R2_BUCKET/lulurobot-mac-latest.zip" \
+            --file "$MAC_ZIP" --content-type application/zip --remote
+
+      - name: Upload Win exe to R2 (versioned)
+        # The Win artifact ships as a zip too (per build-win.ps1 in the spec),
+        # but we expose it under the same naming convention for marketing
+        # symmetry. If you later flip to a true onefile .exe, change the
+        # extension here and in the site button.
+        run: |
+          WIN_FILE=$(find artifacts/win -type f \( -name '*.zip' -o -name '*.exe' \) | head -1)
+          [ -n "$WIN_FILE" ] || { echo "no win artifact"; exit 1; }
+          EXT="${WIN_FILE##*.}"
+          MIME=$([ "$EXT" = "exe" ] && echo "application/octet-stream" || echo "application/zip")
+          npx --yes wrangler r2 object put \
+            "$R2_BUCKET/lulurobot-win-v${{ steps.ver.outputs.version }}.$EXT" \
+            --file "$WIN_FILE" --content-type "$MIME" --remote
+          npx --yes wrangler r2 object put \
+            "$R2_BUCKET/lulurobot-win-latest.$EXT" \
+            --file "$WIN_FILE" --content-type "$MIME" --remote
+
+      - name: Write version.json manifest
+        run: |
+          cat > version.json <<EOF
+          {
+            "version": "${{ steps.ver.outputs.version }}",
+            "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "mac_url": "https://downloads.z1nexusn1.org/lulurobot-mac-v${{ steps.ver.outputs.version }}.zip",
+            "win_url": "https://downloads.z1nexusn1.org/lulurobot-win-v${{ steps.ver.outputs.version }}.zip",
+            "latest": {
+              "mac": "https://downloads.z1nexusn1.org/lulurobot-mac-latest.zip",
+              "win": "https://downloads.z1nexusn1.org/lulurobot-win-latest.zip"
+            }
+          }
+          EOF
+          npx --yes wrangler r2 object put \
+            "$R2_BUCKET/version.json" \
+            --file version.json --content-type application/json --remote
+
+      - name: Set up Node for site build
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+
+      - name: Build marketing site (Astro)
+        working-directory: site
+        run: |
+          npm ci
+          npm run build
+
+      - name: Deploy site to Cloudflare Pages
+        working-directory: site
+        run: |
+          npx --yes wrangler pages deploy dist \
+            --project-name="$PAGES_PROJECT" \
+            --branch=main \
+            --commit-hash="${GITHUB_SHA}"
