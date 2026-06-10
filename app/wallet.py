@@ -51,3 +51,38 @@ def clear_token() -> None:
         _path().unlink(missing_ok=True)
     except Exception:
         pass
+
+
+def fetch_trial_token(bridge_url: str, timeout_s: float = 10.0) -> tuple[str | None, str | None]:
+    """Hit the bridge's /mint-trial endpoint for a $0.10 trial wallet token.
+    Returns (token, error). On success, error is None and the caller should
+    `set_token(token)`. On failure, token is None and error names the reason
+    (HTTP code, 'trial_already_issued', or the exception class name).
+
+    Used for the first-launch flow in distributed builds: any new user who
+    starts the app without a stored token gets a one-shot $0.10 trial so
+    they can evaluate the product. The bridge rate-limits to one trial per
+    IP per 24h so a single IP can't repeatedly drain the trial pool.
+
+    Network failures degrade silently — the caller falls back to prompting
+    for an operator-issued token if the trial fetch fails."""
+    import json as _json
+    import urllib.request
+    import urllib.error
+    if not bridge_url:
+        return None, "no_bridge_url"
+    url = bridge_url.rstrip("/") + "/mint-trial"
+    req = urllib.request.Request(url, data=b"", method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            payload = _json.loads(resp.read().decode("utf-8"))
+            tok = (payload.get("token") or "").strip()
+            return (tok, None) if tok else (None, "no_token_in_response")
+    except urllib.error.HTTPError as e:
+        try:
+            body = _json.loads(e.read().decode("utf-8"))
+            return None, body.get("error") or f"http_{e.code}"
+        except Exception:
+            return None, f"http_{e.code}"
+    except Exception as e:
+        return None, type(e).__name__

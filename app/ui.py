@@ -388,15 +388,27 @@ class MainWindow(QMainWindow):
 
         layout.addSpacing(6)
 
-        # Wallet balance line (CN-ship builds only). Shows the user their own
-        # remaining quota in dollars — never Gemini tokens. Updated from the
-        # bridge's X-Quota-Remaining-Usd header after each turn.
+        # Wallet balance line (CN-ship builds only). Shows the user a masked
+        # token preview + remaining quota in dollars — never Gemini tokens.
+        # Updated from the bridge's X-Quota-Remaining-Usd header after each
+        # turn. The 更新令牌 button lets the user replace the active token
+        # at any time (not just when one runs out) — previously the label
+        # said "令牌：已设置" with no obvious affordance to change it.
         self._last_remaining: float | None = None
         if IS_CN_BUILD:
+            wallet_row = QHBoxLayout()
+            wallet_row.setSpacing(10)
             self.balance_label = QLabel(self._balance_text())
             self.balance_label.setStyleSheet("color: #8b9099; font-size: 20px;")
             self.balance_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            layout.addWidget(self.balance_label)
+            wallet_row.addWidget(self.balance_label)
+            self.token_btn = QPushButton("更新令牌")
+            self.token_btn.setObjectName("linkBtn")
+            self.token_btn.setCursor(Qt.PointingHandCursor)
+            self.token_btn.clicked.connect(self._on_update_token_clicked)
+            wallet_row.addWidget(self.token_btn)
+            wallet_row.addStretch(1)
+            layout.addLayout(wallet_row)
             layout.addSpacing(6)
 
         # Task input
@@ -548,23 +560,49 @@ class MainWindow(QMainWindow):
                 w.deleteLater()
 
     # ── Wallet token / balance ──────────────────────────────────────────
+    @staticmethod
+    def _mask_token(token: str) -> str:
+        """Render a wallet token as `pc_xxxx…yyyy` so the user can tell
+        which token is active without exposing the whole secret in case the
+        screen is being recorded or screenshared."""
+        if not token:
+            return ""
+        if len(token) <= 11:
+            return token
+        return f"{token[:7]}…{token[-4:]}"
+
     def _balance_text(self) -> str:
-        if not wallet.get_token():
-            return "令牌：未设置（运行时输入）"
+        tok = wallet.get_token() or ""
+        if not tok:
+            return "令牌：未设置 · 点击右侧「更新令牌」输入"
+        masked = self._mask_token(tok)
         if self._last_remaining is None:
-            return "令牌：已设置"
-        return f"剩余额度：${self._last_remaining:.2f}"
+            return f"令牌：{masked} · 余额：检测中…"
+        return f"令牌：{masked} · 余额：${self._last_remaining:.2f}"
 
     def _refresh_balance_label(self):
         if IS_CN_BUILD and hasattr(self, "balance_label"):
             self.balance_label.setText(self._balance_text())
 
+    def _on_update_token_clicked(self):
+        """User explicitly asked to change the token. Prompt as normal but
+        skip the 'reason' prefix because this is a deliberate change, not
+        a recovery from an error."""
+        self._prompt_token("")
+
     def _prompt_token(self, reason: str = "") -> bool:
         """Modal prompt for the user's wallet token. Returns True if a token
-        was entered and stored."""
+        was entered and stored. The main window is restored first so the
+        dialog isn't trapped behind a minimized window — that case used to
+        happen when a run minimized to the bubble, then exhausted its
+        quota, and the modal popped up under a window the user couldn't see."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
         prefix = (reason + "\n\n") if reason else ""
         tok, ok = QInputDialog.getText(
-            self, "输入令牌", prefix + "请输入管理员给你的令牌（token）：")
+            self, "输入令牌",
+            prefix + "请输入管理员给你的令牌（token），可在「更新令牌」按钮处随时替换：")
         if ok and tok.strip():
             wallet.set_token(tok.strip())
             self._last_remaining = None
@@ -822,13 +860,18 @@ class MainWindow(QMainWindow):
 
     def _on_failed(self, msg: str):
         # Wallet/quota messages: show verbatim and prompt for a (new) token so
-        # the user can top up and rerun without restarting the app.
+        # the user can top up and rerun without restarting the app. Bubble
+        # is dismissed FIRST (before the prompt) so the user sees the
+        # token-input modal cleanly without a floating widget in the corner.
+        # _prompt_token itself restores the main window from the minimized
+        # state — important when the bubble was the only visible artifact.
         if msg.startswith(("额度", "请输入", "令牌")):
             if msg.startswith("额度"):
                 self._last_remaining = 0.0
                 self._refresh_balance_label()
             self._append_log(f"✗  {msg}")
             self._reset_buttons()
+            self._dismiss_bubble("✗  额度用完", "请输入新令牌继续")
             self._prompt_token(msg)
             return
         # Strip internal run-dir / video paths from failure messages so the

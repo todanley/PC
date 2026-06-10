@@ -100,6 +100,59 @@ export default {
             return Response.json({ ok: true, worker: true });
         }
 
+        // Trial-quota endpoint: mints a fresh $0.10 wallet token per call,
+        // rate-limited to one per IP per day. Returns {token, balance_usd}
+        // on success, 429 if the IP already minted a trial today. The app's
+        // first-launch flow calls this when it has no token stored locally
+        // so users can try the shipped product without an operator-issued
+        // token. $0.10 = the existing `test` tier in issue-token.sh — runs
+        // out within a typical demo session, deliberately enough to evaluate
+        // but not enough for sustained use. Cap is per-IP not per-machine
+        // because the app has no stable machine fingerprint we'd trust.
+        if (url.pathname === "/mint-trial" && request.method === "POST") {
+            const remote = request.headers.get("cf-connecting-ip") || "";
+            if (!remote) {
+                return new Response(
+                    JSON.stringify({ error: "no_remote_ip" }),
+                    { status: 400, headers: { "content-type": "application/json" } },
+                );
+            }
+            // One-per-IP-per-24h: check tokens table for a recent trial issued
+            // to this IP. trial_remote_ip is a NEW column (see schema.sql).
+            const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+            const prior = await env.DB.prepare(
+                "SELECT token FROM tokens WHERE tier='trial' AND trial_remote_ip=?1 AND created_at >= ?2 LIMIT 1",
+            )
+                .bind(remote, since)
+                .first<{ token: string }>();
+            if (prior) {
+                logLine({ event: "trial_reused", remote });
+                return new Response(
+                    JSON.stringify({
+                        error: "trial_already_issued",
+                        message: "this IP already received a trial token in the last 24 hours",
+                    }),
+                    { status: 429, headers: { "content-type": "application/json" } },
+                );
+            }
+            // Mint: pc_ + 32 url-safe random chars (matches issue-token.sh format).
+            const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+            const rand = new Uint8Array(32);
+            crypto.getRandomValues(rand);
+            const token = "pc_" + Array.from(rand, b => alphabet[b % alphabet.length]).join("");
+            const balanceUusd = 100_000; // $0.10 — matches the `test` tier face value.
+            await env.DB.prepare(
+                "INSERT INTO tokens (token, label, tier, balance_uusd, trial_remote_ip, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )
+                .bind(token, "trial", "trial", balanceUusd, remote, utcNow())
+                .run();
+            logLine({ event: "trial_issued", remote, balance_uusd: balanceUusd });
+            return new Response(
+                JSON.stringify({ token, balance_usd: balanceUusd / 1_000_000 }),
+                { status: 200, headers: { "content-type": "application/json" } },
+            );
+        }
+
         if (
             url.pathname !== "/v1beta/openai/chat/completions" ||
             request.method !== "POST"

@@ -17,7 +17,11 @@ CREATE TABLE IF NOT EXISTS tokens (
     -- prepaid wallet (micro-USD): face value the user bought, drawn down to 0.
     balance_uusd       INTEGER NOT NULL DEFAULT 0,
     spent_uusd         INTEGER NOT NULL DEFAULT 0,
-    tier               TEXT,                       -- 'paid' | 'test'
+    tier               TEXT,                       -- 'paid' | 'test' | 'trial'
+    -- For tier='trial' rows: the cf-connecting-ip the trial was minted to.
+    -- /mint-trial refuses to issue a second trial to the same IP within 24h
+    -- (see src/index.ts). NULL on non-trial rows.
+    trial_remote_ip    TEXT,
     -- legacy / unused (kept so old rows and tooling don't break):
     max_calls_per_day  INTEGER,
     calls_today        INTEGER NOT NULL DEFAULT 0,
@@ -27,9 +31,12 @@ CREATE TABLE IF NOT EXISTS tokens (
 );
 
 CREATE INDEX IF NOT EXISTS tokens_label_idx ON tokens(label);
+CREATE INDEX IF NOT EXISTS tokens_trial_ip_idx ON tokens(trial_remote_ip, created_at);
 
 -- Migration for an ALREADY-deployed DB (SQLite: one ADD COLUMN per statement;
 -- safe to re-run — it errors only if the column exists, which you can ignore):
 --   wrangler d1 execute phantom-click-tokens --remote --command="ALTER TABLE tokens ADD COLUMN balance_uusd INTEGER NOT NULL DEFAULT 0;"
 --   wrangler d1 execute phantom-click-tokens --remote --command="ALTER TABLE tokens ADD COLUMN spent_uusd   INTEGER NOT NULL DEFAULT 0;"
 --   wrangler d1 execute phantom-click-tokens --remote --command="ALTER TABLE tokens ADD COLUMN tier         TEXT;"
+--   wrangler d1 execute phantom-click-tokens --remote --command="ALTER TABLE tokens ADD COLUMN trial_remote_ip TEXT;"
+--   wrangler d1 execute phantom-click-tokens --remote --command="CREATE INDEX IF NOT EXISTS tokens_trial_ip_idx ON tokens(trial_remote_ip, created_at);"

@@ -1,11 +1,51 @@
 """Phantom-Click desktop app entry point."""
 import os
 import sys
+import threading
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
+from . import wallet
+from .build_config import BRIDGE_URL, IS_CN_BUILD
 from .ui import MainWindow
+
+
+def _maybe_fetch_trial_token(win: MainWindow) -> None:
+    """First-launch trial-token bootstrap (CN-ship builds only).
+
+    If the app has no token stored locally AND the bridge URL is baked in,
+    spin a background thread to fetch a $0.10 trial token from the bridge's
+    /mint-trial endpoint. On success, store it and refresh the balance
+    label. Silent on failure — the user just sees the normal 'token not
+    set' state and can paste an operator-issued token.
+
+    Runs in a thread so the UI never blocks on a slow network. Bridge is
+    rate-limited per IP, so spamming app launches doesn't drain the pool."""
+    if not IS_CN_BUILD or not BRIDGE_URL:
+        return
+    if wallet.get_token():
+        return  # already have one — leave it alone
+
+    def _worker():
+        tok, err = wallet.fetch_trial_token(BRIDGE_URL)
+        if tok:
+            wallet.set_token(tok)
+            # Refresh the balance label on the Qt main thread.
+            QTimer.singleShot(0, win._refresh_balance_label)
+            QTimer.singleShot(
+                0,
+                lambda: win._append_log(
+                    "🎁  已为您领取 $0.10 试用额度，可立即开始测试。",
+                ),
+            )
+        # Errors deliberately silent — failure just means the user falls
+        # through to the normal "enter your token" path. Log to stderr
+        # though so an operator running the dev build can see what happened.
+        elif err:
+            print(f"[trial-token fetch] {err}", file=sys.stderr, flush=True)
+
+    threading.Thread(target=_worker, daemon=True, name="TrialTokenFetch").start()
 
 
 def _wire_autorun(win: MainWindow) -> None:
@@ -64,6 +104,7 @@ def main():
     win = MainWindow()
     _install_clean_shutdown(app, win)
     _wire_autorun(win)
+    _maybe_fetch_trial_token(win)
     win.show()
     sys.exit(app.exec())
 
