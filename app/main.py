@@ -1,4 +1,4 @@
-"""Phantom-Click desktop app entry point."""
+"""LuLuBot desktop app entry point."""
 import os
 import sys
 
@@ -88,7 +88,7 @@ def _install_clean_shutdown(app: QApplication, win: MainWindow) -> None:
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("Phantom-Click")
+    app.setApplicationName("LuLuBot")
     win = MainWindow()
     _install_clean_shutdown(app, win)
     _wire_autorun(win)

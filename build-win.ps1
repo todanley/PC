@@ -1,5 +1,5 @@
 ﻿# PowerShell build script — Windows equivalent of build-mac.sh.
-# Produces dist\phantom-click.exe (single self-contained onefile binary)
+# Produces dist\LuLuBot.exe (single self-contained onefile binary)
 # with the operator's bridge URL + token baked in.
 #
 # Required env (set by Actions secrets in CI, or `$env:` in PS):
@@ -58,10 +58,10 @@ try {
     if (Test-Path dist) { Remove-Item -Recurse -Force dist }
 
     Write-Host "-> running PyInstaller (this takes 1-3 min on first build) ..."
-    python -m PyInstaller phantom-click.spec --noconfirm --clean
+    python -m PyInstaller lulubot.spec --noconfirm --clean
 
     # Onefile build: single self-contained .exe in dist/.
-    $exePath = "dist\phantom-click.exe"
+    $exePath = "dist\LuLuBot.exe"
     if (-not (Test-Path $exePath)) {
         throw "PyInstaller didn't produce $exePath"
     }

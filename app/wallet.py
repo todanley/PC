@@ -6,8 +6,8 @@ balance; the user pastes it in once and the app reuses it until the balance is
 exhausted (HTTP 402), then prompts for a new one.
 
 Persistence mirrors humanize.TaskCounter: a tiny JSON file under the per-user
-app-data dir (%LOCALAPPDATA%\\PhantomClick on Windows, ~/Library/Application
-Support/PhantomClick on macOS). Best-effort — failures degrade to "no token"
+app-data dir (%LOCALAPPDATA%\\LuLuBot on Windows, ~/Library/Application
+Support/LuLuBot on macOS). Best-effort — failures degrade to "no token"
 rather than raising.
 """
 import json
@@ -21,7 +21,7 @@ def _path() -> Path:
                                    str(Path.home() / "AppData" / "Local")))
     else:
         base = Path.home() / "Library" / "Application Support"
-    return base / "PhantomClick" / "token.json"
+    return base / "LuLuBot" / "token.json"
 
 
 def get_token() -> str | None:

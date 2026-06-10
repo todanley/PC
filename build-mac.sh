@@ -94,7 +94,7 @@ echo "→ build_config baked: BRIDGE_URL=$PHANTOM_BRIDGE_URL (no token baked; us
 rm -rf build dist
 
 echo "→ running PyInstaller (this takes 1-3 min on first build) …"
-python3 -m PyInstaller phantom-click.spec --noconfirm --clean
+python3 -m PyInstaller lulubot.spec --noconfirm --clean
 
 APP="dist/噜噜机器人.app"
 if [[ ! -d "$APP" ]]; then

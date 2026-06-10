@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec — cross-platform packaging for phantom-click.
+"""PyInstaller spec — cross-platform packaging for LuLuBot.
 
 Run via `./build-mac.sh` on macOS or `./build-win.ps1` on Windows (both inject
 build_config first). Don't invoke pyinstaller on this directly without the
@@ -98,7 +98,7 @@ if IS_WIN:
         a.zipfiles,
         a.datas,
         [],
-        name='phantom-click',
+        name='LuLuBot',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
@@ -112,7 +112,7 @@ else:
     exe = EXE(
         pyz, a.scripts, [],
         exclude_binaries=True,
-        name='phantom-click',
+        name='LuLuBot',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
@@ -131,7 +131,7 @@ else:
         strip=False,
         upx=False,
         upx_exclude=[],
-        name='phantom-click',
+        name='LuLuBot',
     )
     app = BUNDLE(
         coll,
