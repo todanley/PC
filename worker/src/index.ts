@@ -22,6 +22,18 @@
 interface Env {
     DB: D1Database;
     GEMINI_API_KEY: string;
+    // GitHub PAT with `repo` scope on the private todanley/PC repo. The
+    // /download/LuLuBot.exe handler uses it to fetch the latest release
+    // asset server-side so CN users only ever connect to bridge.z1nexusn1.org
+    // (which is verified working in China; github.com / objects.githubusercontent.com
+    // are not reliably reachable). Store via:
+    //   wrangler secret put GH_TOKEN
+    GH_TOKEN: string;
+    // GitHub Release asset ID for the current LuLuBot.exe. Bumped each
+    // build via `wrangler secret put LULUBOT_ASSET_ID`. Looking up the
+    // latest release dynamically would also work but locks us into the
+    // GitHub API rate limit on every download, which is cheaper to dodge.
+    LULUBOT_ASSET_ID: string;
 }
 
 const UPSTREAM =
@@ -98,6 +110,66 @@ export default {
 
         if (url.pathname === "/healthz") {
             return Response.json({ ok: true, worker: true });
+        }
+
+        // CN-accessible download proxy for the built LuLuBot.exe.
+        // The artifact is published on GitHub Releases (which is unreliable
+        // from inside China), so we proxy through Cloudflare's edge — CN
+        // users only ever connect to bridge.z1nexusn1.org which is verified
+        // working from CN (the bridge itself runs through the same route),
+        // and CF fetches from GitHub server-side and streams the response
+        // back. Cloudflare's CDN caches the response so repeat downloads
+        // hit the edge instead of GitHub.
+        //
+        // Stable URL for handout: https://bridge.z1nexusn1.org/download/LuLuBot.exe
+        // Migrate to R2 once the operator enables R2 on the CF account.
+        //
+        // GitHub release-asset downloads on PRIVATE repos require auth.
+        // Two-step dance: hit the API endpoint with our PAT, GitHub returns
+        // a 302 to a short-lived signed objects.githubusercontent.com URL,
+        // then we fetch that signed URL withOUT our Authorization header
+        // (sending it would make S3 reject the request as overspecified).
+        if (url.pathname === "/download/LuLuBot.exe" && request.method === "GET") {
+            const apiUrl = `https://api.github.com/repos/todanley/PC/releases/assets/${env.LULUBOT_ASSET_ID}`;
+            const step1 = await fetch(apiUrl, {
+                headers: {
+                    Authorization: `Bearer ${env.GH_TOKEN}`,
+                    Accept: "application/octet-stream",
+                    "User-Agent": "LuLuBot-bridge",
+                },
+                redirect: "manual",
+            });
+            if (step1.status !== 302) {
+                logLine({
+                    event: "download_step1_unexpected",
+                    status: step1.status,
+                    asset: env.LULUBOT_ASSET_ID,
+                });
+                return new Response(`download not available (gh step 1 ${step1.status})`, { status: 502 });
+            }
+            const signedUrl = step1.headers.get("location");
+            if (!signedUrl) {
+                return new Response("download not available (no redirect target)", { status: 502 });
+            }
+            // Fetch the actual binary from the signed URL — no auth.
+            // Edge caching DISABLED for now: cache key would be the URL
+            // alone, so when we re-point LULUBOT_ASSET_ID at a new build
+            // the cached old binary keeps returning until the TTL expires.
+            // Pinning a versioned cacheKey would solve that, but until
+            // builds are stable enough that we trust them not to ship a
+            // bad binary, "always fetch from GitHub" is safer than
+            // "cached wrong file for 24h". GitHub's CDN handles the cost.
+            const upstream = await fetch(signedUrl);
+            const headers = new Headers();
+            headers.set("content-type", "application/octet-stream");
+            const cl = upstream.headers.get("content-length");
+            if (cl) headers.set("content-length", cl);
+            headers.set("content-disposition", 'attachment; filename="LuLuBot.exe"');
+            headers.set("cache-control", "no-store");
+            return new Response(upstream.body, {
+                status: upstream.status,
+                headers,
+            });
         }
 
         if (
