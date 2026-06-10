@@ -26,7 +26,7 @@ jobs:
             label: win
             # PowerShell on Windows; bash on macOS — the call sites differ.
             script: pwsh -File ./build-win.ps1
-            artifact_path: dist/噜噜机器人-win.zip
+            artifact_path: dist/LuLuBot.exe
 
     runs-on: ${{ matrix.os }}
     name: build-${{ matrix.label }}
@@ -113,33 +113,34 @@ jobs:
       # Two upload passes each (versioned + latest alias). Wrangler is already
       # the tool we use for the worker — same auth model, same CLI surface,
       # one fewer dependency to manage in CI.
-      - name: Upload Mac zip to R2 (versioned)
+      #
+      # File naming reflects the LuLuBot rename: the inner Mac binary is
+      # `LuLuBot`, the .app stays `噜噜机器人.app` for the user-facing
+      # bundle name, the Windows artifact is a onefile `LuLuBot.exe`.
+      - name: Upload Mac zip to R2 (versioned + latest alias)
         run: |
           MAC_ZIP=$(find artifacts/mac -type f -name '*.zip' | head -1)
           [ -n "$MAC_ZIP" ] || { echo "no mac zip"; exit 1; }
           npx --yes wrangler r2 object put \
-            "$R2_BUCKET/lulurobot-mac-v${{ steps.ver.outputs.version }}.zip" \
+            "$R2_BUCKET/LuLuBot-mac-v${{ steps.ver.outputs.version }}.zip" \
             --file "$MAC_ZIP" --content-type application/zip --remote
           npx --yes wrangler r2 object put \
-            "$R2_BUCKET/lulurobot-mac-latest.zip" \
+            "$R2_BUCKET/LuLuBot-mac-latest.zip" \
             --file "$MAC_ZIP" --content-type application/zip --remote
 
-      - name: Upload Win exe to R2 (versioned)
-        # The Win artifact ships as a zip too (per build-win.ps1 in the spec),
-        # but we expose it under the same naming convention for marketing
-        # symmetry. If you later flip to a true onefile .exe, change the
-        # extension here and in the site button.
+      - name: Upload Win exe to R2 (versioned + latest alias)
+        # build-win.ps1 emits onefile dist/LuLuBot.exe (no zip layer); upload
+        # as application/octet-stream so browsers prompt download instead of
+        # attempting to render it.
         run: |
-          WIN_FILE=$(find artifacts/win -type f \( -name '*.zip' -o -name '*.exe' \) | head -1)
-          [ -n "$WIN_FILE" ] || { echo "no win artifact"; exit 1; }
-          EXT="${WIN_FILE##*.}"
-          MIME=$([ "$EXT" = "exe" ] && echo "application/octet-stream" || echo "application/zip")
+          WIN_EXE=$(find artifacts/win -type f -name '*.exe' | head -1)
+          [ -n "$WIN_EXE" ] || { echo "no win exe"; exit 1; }
           npx --yes wrangler r2 object put \
-            "$R2_BUCKET/lulurobot-win-v${{ steps.ver.outputs.version }}.$EXT" \
-            --file "$WIN_FILE" --content-type "$MIME" --remote
+            "$R2_BUCKET/LuLuBot-v${{ steps.ver.outputs.version }}.exe" \
+            --file "$WIN_EXE" --content-type application/octet-stream --remote
           npx --yes wrangler r2 object put \
-            "$R2_BUCKET/lulurobot-win-latest.$EXT" \
-            --file "$WIN_FILE" --content-type "$MIME" --remote
+            "$R2_BUCKET/LuLuBot-latest.exe" \
+            --file "$WIN_EXE" --content-type application/octet-stream --remote
 
       - name: Write version.json manifest
         run: |
@@ -147,11 +148,12 @@ jobs:
           {
             "version": "${{ steps.ver.outputs.version }}",
             "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "mac_url": "https://downloads.z1nexusn1.org/lulurobot-mac-v${{ steps.ver.outputs.version }}.zip",
-            "win_url": "https://downloads.z1nexusn1.org/lulurobot-win-v${{ steps.ver.outputs.version }}.zip",
+            "mac_url": "https://downloads.z1nexusn1.org/LuLuBot-mac-v${{ steps.ver.outputs.version }}.zip",
+            "win_url": "https://downloads.z1nexusn1.org/LuLuBot-v${{ steps.ver.outputs.version }}.exe",
             "latest": {
-              "mac": "https://downloads.z1nexusn1.org/lulurobot-mac-latest.zip",
-              "win": "https://downloads.z1nexusn1.org/lulurobot-win-latest.zip"
+              "mac": "https://downloads.z1nexusn1.org/LuLuBot-mac-latest.zip",
+              "win_r2": "https://downloads.z1nexusn1.org/LuLuBot-latest.exe",
+              "win_proxy": "https://bridge.z1nexusn1.org/download/LuLuBot.exe"
             }
           }
           EOF

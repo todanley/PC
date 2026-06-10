@@ -6,8 +6,15 @@
 // fallback below is what the site shows when the manifest hasn't been
 // fetched yet (or when the user is offline).
 const FALLBACK_VERSION = "0.2.0";
-const MAC_URL = "https://downloads.z1nexusn1.org/lulurobot-mac-latest.zip";
-const WIN_URL = "https://downloads.z1nexusn1.org/lulurobot-win-latest.exe";
+// Two different download backends — both reach CN via Cloudflare's edge:
+//   • Mac → R2 public bucket. Static zip uploaded by CI on every tag push.
+//   • Win → Worker proxy. The Worker re-fetches the asset from the private
+//     GitHub Release (with the operator's PAT) and streams it back through
+//     CF's CDN. This sidesteps GitHub's CN reachability quirks and works
+//     today without R2 enabled. The Mac side will likely migrate to the
+//     same Worker-proxy pattern once we add a Mac endpoint.
+const MAC_URL = "https://downloads.z1nexusn1.org/LuLuBot-mac-latest.zip";
+const WIN_URL = "https://bridge.z1nexusn1.org/download/LuLuBot.exe";
 const VERSION_JSON_URL = "https://downloads.z1nexusn1.org/version.json";
 ---
 <!doctype html>
