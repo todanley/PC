@@ -3,9 +3,8 @@ import json
 import os
 import threading
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QDateTime, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QPixmap
-from PySide6.QtCore import QDateTime
 from PySide6.QtWidgets import (
     QButtonGroup, QDialog, QFrame, QHBoxLayout, QInputDialog, QLabel,
     QListWidget, QListWidgetItem, QMainWindow, QPlainTextEdit, QPushButton,
@@ -76,6 +75,50 @@ QLabel#monoText {
     font-size: 14px; background: #0f1115; padding: 6px; border-radius: 4px;
 }
 QScrollArea { background: #0f1115; border: none; }
+QFrame#sepLine { background: #2a2f38; max-height: 1px; min-height: 1px; }
+QFrame#scheduleBadge {
+    background: rgba(90, 141, 255, 30);
+    border: 1px solid rgba(90, 141, 255, 80);
+    border-radius: 12px;
+}
+QLabel#scheduleNote { color: #8ba3ff; font-size: 22px; padding: 6px 14px; }
+QRadioButton { color: #e6e8eb; font-size: 24px; padding: 4px 12px; }
+QRadioButton::indicator {
+    width: 22px; height: 22px; border-radius: 11px;
+    background: #1a1d23; border: 2px solid #4a5060;
+}
+QRadioButton::indicator:checked {
+    background: #5a8dff; border: 2px solid #5a8dff;
+}
+QSpinBox {
+    background: #1a1d23; border: 1px solid #2a2f38; border-radius: 8px;
+    padding: 6px 10px; color: #e6e8eb; font-size: 22px;
+}
+QSpinBox:focus { border: 1px solid #5a8dff; }
+"""
+
+# Status bubble shown bottom-right of the primary screen while a task runs.
+# Frameless + always-on-top + semi-transparent dark card so it's visible to
+# a demo viewer but doesn't block the agent's workspace. Updates live as
+# step_done fires. Click the bubble to restore the main window.
+BUBBLE_QSS = """
+QFrame#bubbleCard {
+    background: rgba(15, 17, 21, 235);
+    border: 1px solid rgba(90, 141, 255, 110);
+    border-radius: 16px;
+}
+QLabel#bubbleHeader {
+    color: #8ba3ff; font-size: 16px; font-weight: 600;
+}
+QLabel#bubbleAction {
+    color: #e6e8eb; font-size: 20px; font-weight: 600;
+}
+QLabel#bubbleDetail {
+    color: #c9cdd4; font-size: 14px;
+}
+QLabel#bubbleHint {
+    color: #5a6072; font-size: 11px;
+}
 """
 
 
@@ -192,6 +235,113 @@ class _TurnCard(QFrame):
                 v.addLayout(row)
 
 
+class _StatusBubble(QWidget):
+    """Floating always-on-top status card shown while a task runs. Sits
+    in the bottom-right of the primary screen (draggable). Frameless +
+    semi-transparent so it overlays the agent's workspace without blocking
+    it — small enough that a demo viewer can still see what's happening
+    underneath. Click anywhere on the bubble to restore the main window.
+    Updated live by MainWindow as step_done signals arrive from the runner."""
+
+    # Clicked anywhere → main window restores. Connected by MainWindow.
+    clicked = Signal()
+
+    def __init__(self):
+        super().__init__(None,
+                         Qt.FramelessWindowHint
+                         | Qt.WindowStaysOnTopHint
+                         | Qt.Tool
+                         | Qt.WindowDoesNotAcceptFocus)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+        self.setStyleSheet(BUBBLE_QSS)
+
+        self._card = QFrame(self)
+        self._card.setObjectName("bubbleCard")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self._card)
+
+        v = QVBoxLayout(self._card)
+        v.setContentsMargins(18, 14, 18, 14)
+        v.setSpacing(4)
+
+        self._header = QLabel("噜噜机器人  ·  准备中…")
+        self._header.setObjectName("bubbleHeader")
+        v.addWidget(self._header)
+
+        self._action = QLabel("等待第一步")
+        self._action.setObjectName("bubbleAction")
+        self._action.setWordWrap(True)
+        v.addWidget(self._action)
+
+        self._detail = QLabel("")
+        self._detail.setObjectName("bubbleDetail")
+        self._detail.setWordWrap(True)
+        v.addWidget(self._detail)
+
+        self._hint = QLabel("点击此处恢复主窗口")
+        self._hint.setObjectName("bubbleHint")
+        v.addWidget(self._hint)
+
+        self.setFixedWidth(420)
+        self._drag_pos = None
+        self._reposition()
+
+    def _reposition(self):
+        """Anchor bottom-right of primary screen with a small margin.
+        Called on first show + whenever content height changes so the bubble
+        always hugs the corner instead of growing upward off-screen."""
+        from PySide6.QtGui import QGuiApplication
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        geo = screen.availableGeometry()
+        self.adjustSize()
+        margin = 28
+        self.move(geo.right() - self.width() - margin,
+                  geo.bottom() - self.height() - margin)
+
+    def set_step(self, step: int, action_label: str, detail: str):
+        self._header.setText(f"噜噜机器人  ·  步骤 {step}")
+        self._action.setText(action_label)
+        # Truncate long reasoning so the bubble stays compact.
+        if detail and len(detail) > 140:
+            detail = detail[:137] + "…"
+        self._detail.setText(detail or "")
+        self._detail.setVisible(bool(detail))
+        self._reposition()
+
+    def set_status(self, text: str, detail: str = ""):
+        """Generic status (e.g. 'completed', 'failed'). Used for the
+        terminal frame before auto-hide."""
+        self._header.setText("噜噜机器人")
+        self._action.setText(text)
+        self._detail.setText(detail or "")
+        self._detail.setVisible(bool(detail))
+        self._reposition()
+
+    # Click anywhere on the bubble → restore main window.
+    def mousePressEvent(self, ev):
+        if ev.button() == Qt.LeftButton:
+            self._drag_pos = ev.globalPosition().toPoint() - self.pos()
+            self._drag_moved = False
+
+    def mouseMoveEvent(self, ev):
+        if self._drag_pos is not None:
+            new_pos = ev.globalPosition().toPoint() - self._drag_pos
+            if (new_pos - self.pos()).manhattanLength() > 3:
+                self._drag_moved = True
+            self.move(new_pos)
+
+    def mouseReleaseEvent(self, ev):
+        # Treat as a click ONLY if the cursor didn't move — preserves
+        # drag-to-reposition while keeping click-to-restore intuitive.
+        if self._drag_pos is not None and not getattr(self, "_drag_moved", False):
+            self.clicked.emit()
+        self._drag_pos = None
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -200,6 +350,15 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(DARK_QSS)
         self._runner: TaskRunner | None = None
         self._system_prompt: str = ""
+        # Floating status bubble shown while a run is in progress. Built
+        # lazily on first run start to avoid surfacing it during init.
+        self._bubble: _StatusBubble | None = None
+        # When True, the main window self-minimizes on Run start and the
+        # bubble takes over showing progress. Restored on Stop or when
+        # the user clicks the bubble. The harness's PHANTOM_AUTORUN path
+        # does its own minimize so this flag only matters for interactive
+        # clicks of the Run button.
+        self._minimize_on_run: bool = True
         # Scheduling: when "定时重复" mode is selected, _schedule_timer fires
         # every _schedule_interval_min minutes and re-launches the same task.
         # _schedule_active is True for the whole scheduled session (across
@@ -251,11 +410,12 @@ class MainWindow(QMainWindow):
         self.task_input.setFixedHeight(152)
         layout.addWidget(self.task_input)
 
-        # Mode row: single-run vs scheduled-repeat. Two radio buttons in
-        # a button group; selecting "定时重复" reveals the interval spinner
-        # and the schedule_note label. The Run button's label changes to
-        # "▶ 开始定时" so the user knows clicking it starts a recurring
-        # job, not a one-off.
+        # Scheduling UI — single-run vs timed-repeat with interval picker.
+        # Hidden in the demo build (showSchedule = False). Widgets are still
+        # built and wired so the rest of the run/stop logic finds them, but
+        # they take no visible space (hide() + zero margins on the row).
+        # To re-enable in a future build, just remove the hide() calls.
+        SHOW_SCHEDULE = False
         mode_row = QHBoxLayout()
         mode_row.setSpacing(14)
         self._mode_group = QButtonGroup(self)
@@ -267,11 +427,10 @@ class MainWindow(QMainWindow):
         self._mode_group.idToggled.connect(self._on_mode_changed)
         mode_row.addWidget(self.mode_once_btn)
         mode_row.addWidget(self.mode_sched_btn)
-        # Interval picker — only visible in schedule mode.
         self.interval_label = QLabel("每")
         self.interval_label.setStyleSheet("color: #8b9099;")
         self.interval_spin = QSpinBox()
-        self.interval_spin.setRange(1, 1440)  # 1 minute to 24 hours
+        self.interval_spin.setRange(1, 1440)
         self.interval_spin.setValue(5)
         self.interval_spin.setSuffix(" 分钟")
         self.interval_spin.setFixedWidth(120)
@@ -280,15 +439,19 @@ class MainWindow(QMainWindow):
         mode_row.addWidget(self.interval_label)
         mode_row.addWidget(self.interval_spin)
         mode_row.addStretch(1)
-        layout.addLayout(mode_row)
+        if SHOW_SCHEDULE:
+            layout.addLayout(mode_row)
+        else:
+            # Keep widgets in the tree (other code references them) but
+            # hide them and never add the row to the layout.
+            self.mode_once_btn.hide()
+            self.mode_sched_btn.hide()
 
-        # When scheduled mode is active, this label shows the next-fire
-        # countdown / status (e.g. "下次运行：14:23:05"). Hidden in single-run
-        # mode and during the in-flight run itself.
         self.schedule_note = QLabel("")
         self.schedule_note.setStyleSheet("color: #5fa8f5; font-size: 22px;")
         self.schedule_note.hide()
-        layout.addWidget(self.schedule_note)
+        if SHOW_SCHEDULE:
+            layout.addWidget(self.schedule_note)
 
         # Controls row
         ctrl_row = QHBoxLayout()
@@ -306,16 +469,24 @@ class MainWindow(QMainWindow):
 
         ctrl_row.addStretch(1)
 
+        # Debug + system-prompt buttons exist (other code paths still call
+        # _on_toggle_debug / _on_show_system) but are hidden in the demo
+        # build to keep the control row clean. Re-show by flipping the
+        # SHOW_DEV_BUTTONS toggle below.
+        SHOW_DEV_BUTTONS = False
         self.debug_btn = QPushButton("调试")
         self.debug_btn.setObjectName("linkBtn")
         self.debug_btn.setCheckable(True)
         self.debug_btn.toggled.connect(self._on_toggle_debug)
-        ctrl_row.addWidget(self.debug_btn)
-
         self.sys_btn = QPushButton("查看系统提示")
         self.sys_btn.setObjectName("linkBtn")
         self.sys_btn.clicked.connect(self._on_show_system)
-        ctrl_row.addWidget(self.sys_btn)
+        if SHOW_DEV_BUTTONS:
+            ctrl_row.addWidget(self.debug_btn)
+            ctrl_row.addWidget(self.sys_btn)
+        else:
+            self.debug_btn.hide()
+            self.sys_btn.hide()
 
         layout.addLayout(ctrl_row)
         layout.addSpacing(8)
@@ -470,6 +641,17 @@ class MainWindow(QMainWindow):
         # Hide the next-run countdown while a run is in flight.
         self.schedule_note.hide()
 
+        # Marketing-demo posture: the main window minimizes itself so it
+        # doesn't cover the agent's workspace, and the floating bubble takes
+        # over for status reporting. The harness's PHANTOM_AUTORUN path
+        # already minimizes from app/main.py — for direct GUI runs we do
+        # the same here so the demo flow is identical.
+        if self._minimize_on_run:
+            self._ensure_bubble()
+            self._bubble.set_step(0, "▶  正在启动…", task[:140])
+            self._bubble.show()
+            self.showMinimized()
+
         self._runner = TaskRunner(task)
         self._runner.step_started.connect(self._on_step_started)
         self._runner.step_done.connect(self._on_step_done)
@@ -478,6 +660,23 @@ class MainWindow(QMainWindow):
         self._runner.failed.connect(self._on_failed)
         self._runner.quota_updated.connect(self._on_quota_updated)
         self._runner.start()
+
+    def _ensure_bubble(self):
+        """Lazy-build the floating status bubble. Clicking it restores
+        the main window so the user can interact with the GUI normally
+        again (e.g. type a new task / inspect the log)."""
+        if self._bubble is not None:
+            return
+        self._bubble = _StatusBubble()
+        self._bubble.clicked.connect(self._on_bubble_clicked)
+
+    def _on_bubble_clicked(self):
+        """Restore the main window from the bubble. Doesn't stop the run —
+        the agent keeps working, the user just gets the GUI back to look
+        at the log / debug panel. The bubble stays visible too."""
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def _on_stop(self):
         # In scheduled mode, Stop ends the whole recurring session — both
@@ -495,6 +694,12 @@ class MainWindow(QMainWindow):
             self._runner.cancel()
             self._append_log("[已请求停止 — 正在结束当前步骤…]")
             self.stop_btn.setEnabled(False)
+        # Restore the main window so the user can see the log after stopping.
+        # _dismiss_bubble will fire from the runner's failed signal too, but
+        # the user just clicked Stop — bring the GUI back immediately rather
+        # than waiting for the next-turn signal.
+        self.showNormal()
+        self.raise_()
 
     def closeEvent(self, event):
         """Window close handler. If a task is running, an in-flight vision
@@ -558,6 +763,12 @@ class MainWindow(QMainWindow):
         prog = action.get("progress")
         if prog:
             self._append_log(f"     [进度] {prog}")
+        # Mirror to the floating bubble. Show the action label prominently
+        # and the model's reasoning as the secondary line. progress wins
+        # over reasoning when present — it's a more compressed status.
+        if self._bubble is not None and self._bubble.isVisible():
+            action_text = f"→  {label} {detail}".rstrip()
+            self._bubble.set_step(step, action_text, prog or reason or "")
 
     def _on_toggle_debug(self, checked: bool):
         """Show / hide the right-hand debug pane (per-turn cards with
@@ -594,7 +805,20 @@ class MainWindow(QMainWindow):
     def _on_finished_ok(self, msg: str):
         self._append_log(f"✓  完成：{msg}")
         self._reset_buttons()
+        self._dismiss_bubble("✓  完成", msg)
         self._maybe_schedule_next()
+
+    def _dismiss_bubble(self, status_text: str, detail: str = ""):
+        """Show a terminal status in the bubble for a moment, then hide it.
+        Used when a run completes or fails so the user briefly sees the
+        outcome before the bubble disappears. If no run was visible to
+        begin with, this is a no-op."""
+        if self._bubble is None or not self._bubble.isVisible():
+            return
+        self._bubble.set_status(status_text, detail)
+        # Hold the final status briefly so a demo viewer reads it, then hide.
+        # Keep the bubble alive (don't delete) so the next run can re-use it.
+        QTimer.singleShot(2500, lambda: self._bubble and self._bubble.hide())
 
     def _on_failed(self, msg: str):
         # Wallet/quota messages: show verbatim and prompt for a (new) token so
@@ -621,6 +845,7 @@ class MainWindow(QMainWindow):
             clean = "卡住了，已自动停止"
         self._append_log(f"✗  {clean}")
         self._reset_buttons()
+        self._dismiss_bubble("✗  失败", clean)
         # Scheduling keeps firing through failures — a transient bridge
         # error or one bad run shouldn't kill a long-running schedule. The
         # ONLY exception is wallet/quota messages (`额度`/`请输入`/`令牌`):
