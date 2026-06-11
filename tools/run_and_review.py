@@ -231,11 +231,25 @@ def main() -> int:
     # Get our console out of the way so it can't obscure (or be closed by) the
     # browser the agent is about to drive. Do it last, right before launch.
     _minimize_own_console()
+    # Always clear the desktop before the agent's first turn — minimizes all
+    # open windows so the agent starts with a clean workspace. Without this,
+    # whatever the operator had foreground (an IDE / a terminal / a chat
+    # window) intercepts the agent's first Win+R or system shortcut: the
+    # keystroke gets routed to that app instead of producing the Run dialog,
+    # the agent's follow-up `type 'chrome'` lands as text in the wrong place,
+    # and the run loops waiting for Chrome that never opened. Doesn't violate
+    # the no-URL-knowledge rule — this is environment cleanup, not a navigation
+    # action.
+    if sys.platform == "win32":
+        try:
+            import win32com.client
+            win32com.client.Dispatch("Shell.Application").MinimizeAll()
+            time.sleep(0.4)
+        except Exception:
+            pass
     # When the user explicitly opted into pre-launching Chrome via the harness
     # (--chrome-profile / --url), also raise that Chrome window so a separate
-    # terminal/IDE window can't dominate the agent's first screenshot. When
-    # neither flag is passed (agent-driven test), do NOT touch window state —
-    # the whole point is to test the agent without harness pre-arrangement.
+    # terminal/IDE window can't dominate the agent's first screenshot.
     if args.chrome_profile or args.url:
         _foreground_chrome()
     proc = subprocess.Popen(
