@@ -40,6 +40,55 @@ from app import wallet
 NO_TOKEN_MSG = "请输入令牌后再运行（向管理员购买额度）"
 QUOTA_MSG = "额度已用完，请输入新的令牌"
 
+
+def _dump_turn(screenshot_path: str, system: str, user_text: str, response_text: str) -> None:
+    """Write the full per-turn record to disk. Two outputs per call:
+
+      1. PHANTOM_TURN_DUMP — single combined log file (append). Already used
+         by the harness (tools/run_and_review.py) for cross-turn grepping
+         and the legacy debug pipeline.
+
+      2. <rundir>/turn_NN.md — a SEPARATE per-turn file next to the matching
+         mark_NN.png image, so a debugger looking at a specific marked frame
+         can open that frame's USER + RESPONSE without scrolling through the
+         combined log. The turn number is extracted from the mark filename
+         (mark_07.png → turn 07) so the pairing is obvious on disk.
+
+    Both outputs are best-effort — write failures are swallowed since the
+    run itself can continue without the debug record."""
+    import os as _os
+    import re as _re
+    # 1. Combined log (legacy behavior).
+    dump_path = _os.environ.get("PHANTOM_TURN_DUMP")
+    if dump_path:
+        try:
+            with open(dump_path, "a", encoding="utf-8") as fh:
+                fh.write("\n" + "=" * 80 + "\n")
+                fh.write(f"TURN @ {screenshot_path}\n")
+                fh.write("=" * 80 + "\nSYSTEM:\n" + system + "\n")
+                fh.write("-" * 80 + "\nUSER TEXT:\n" + user_text + "\n")
+                fh.write("-" * 80 + "\nRESPONSE:\n" + response_text + "\n")
+        except Exception:
+            pass
+    # 2. Per-turn markdown file alongside the mark image. Skipped when the
+    # screenshot path doesn't follow the mark_NN.png naming (single-shot
+    # debug runs sometimes pass a stable tmp path with no step index).
+    try:
+        base = _os.path.basename(screenshot_path)
+        m = _re.match(r"mark_(\d+)\.png$", base)
+        if m:
+            n = m.group(1)
+            out = _os.path.join(_os.path.dirname(screenshot_path), f"turn_{n}.md")
+            with open(out, "w", encoding="utf-8") as fh:
+                fh.write(f"# Turn {n}\n\n")
+                fh.write(f"![mark](./{base})\n\n")
+                fh.write("## USER\n\n")
+                fh.write("```\n" + user_text + "\n```\n\n")
+                fh.write("## RESPONSE\n\n")
+                fh.write("```json\n" + response_text + "\n```\n")
+    except Exception:
+        pass
+
 # CN-ship build: pin model + provider + token regardless of env. The whole
 # point is "downloads and runs" — env vars don't exist in the user's world.
 # Default to gemini-3.5-flash: A/B tested against 3.1-pro on slider captchas
