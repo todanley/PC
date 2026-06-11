@@ -272,13 +272,35 @@ class SetOfMarkEngine:
 
     def _merge(self, uia_boxes: list,
                text_boxes: list, icon_boxes: list) -> list:
-        """Combine sources under a strict priority: UIA accessibility boxes
-        first (precise + labeled — they SUPERSEDE a nearby OCR glyph, whose
-        centroid is off for an icon+label control), then text marks, then icon
-        marks fill whatever budget is left. Deduped so a lower-priority box
-        never shadows a higher one. Icons get their own cap so a noisy contour
-        pass can't flood it."""
-        uia_kept = self._dedup_against(uia_boxes, [])[:_MAX_MARKS]
+        """Combine sources. UIA accessibility boxes are usually precise +
+        labeled, BUT some pages nest multiple visible labels under one
+        a11y element (e.g. Douyin's profile header wraps `关注 27`, the
+        live indicator, `粉丝 4`, and `获赞` inside one <a> link). UIA
+        then returns ONE wide box for the whole row, whose centre lands
+        between the labels — the model picks the wide mark thinking it's
+        the count, and the runner clicks the middle of the wrapper which
+        hits the wrong child element. To prevent that: if a UIA box
+        spatially CONTAINS two or more OCR sub-boxes (their centres fall
+        inside the UIA bounds), drop the UIA wrapper and keep the OCR
+        sub-boxes — they're tighter and click the right pixel. Single-
+        text UIA boxes (the common case: a button labeled `Submit`) are
+        kept as-is. After this filter the original priority ordering
+        (UIA → text → icons) and centre-distance dedup apply unchanged."""
+        filtered_uia = []
+        for u in uia_boxes:
+            contained = 0
+            for t in text_boxes:
+                if u.x0 <= t.cx <= u.x1 and u.y0 <= t.cy <= u.y1:
+                    contained += 1
+                    if contained >= 2:
+                        break
+            if contained >= 2:
+                # Over-wide UIA wrapper around multiple visible labels —
+                # drop it; the OCR sub-boxes will represent each label
+                # individually with the correct centre.
+                continue
+            filtered_uia.append(u)
+        uia_kept = self._dedup_against(filtered_uia, [])[:_MAX_MARKS]
         used = uia_kept
         text_kept = self._dedup_against(text_boxes, used)
         text_kept = text_kept[:max(0, _MAX_MARKS - len(used))]
