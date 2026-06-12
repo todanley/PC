@@ -637,17 +637,7 @@ class VisionClient:
                 "user_text": user_text,
                 "response_text": text,
             }
-            dump_path = os.environ.get("PHANTOM_TURN_DUMP")
-            if dump_path:
-                try:
-                    with open(dump_path, "a", encoding="utf-8") as fh:
-                        fh.write("\n" + "=" * 80 + "\n")
-                        fh.write(f"TURN @ {screenshot_path}\n")
-                        fh.write("=" * 80 + "\nSYSTEM:\n" + self.system + "\n")
-                        fh.write("-" * 80 + "\nUSER TEXT:\n" + user_text + "\n")
-                        fh.write("-" * 80 + "\nRESPONSE:\n" + text + "\n")
-                except Exception:
-                    pass
+            _dump_turn(screenshot_path, self.system, user_text, text)
             m = re.search(r"\{[\s\S]*\}", text)
             if not m:
                 raise VisionError(f"no JSON in response: {text[:200]}")
@@ -805,17 +795,7 @@ class VisionClient:
             "user_text": user_text,
             "response_text": text,
         }
-        dump_path = os.environ.get("PHANTOM_TURN_DUMP")
-        if dump_path:
-            try:
-                with open(dump_path, "a", encoding="utf-8") as fh:
-                    fh.write("\n" + "=" * 80 + "\n")
-                    fh.write(f"TURN @ {screenshot_path}\n")
-                    fh.write("=" * 80 + "\nSYSTEM:\n" + self.system + "\n")
-                    fh.write("-" * 80 + "\nUSER TEXT:\n" + user_text + "\n")
-                    fh.write("-" * 80 + "\nRESPONSE:\n" + text + "\n")
-            except Exception:
-                pass
+        _dump_turn(screenshot_path, self.system, user_text, text)
         m = re.search(r"\{[\s\S]*\}", text)
         if not m:
             raise VisionError(f"no JSON in response: {text[:200]}")
