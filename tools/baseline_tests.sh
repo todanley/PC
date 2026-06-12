@@ -11,10 +11,11 @@
 # and turn dumps land in _runs/<ts>_<label>/ as usual.
 #
 # Usage:
-#   tools/baseline_tests.sh all          # run all three sequentially
+#   tools/baseline_tests.sh all          # run all four sequentially
 #   tools/baseline_tests.sh 1            # run douyin follow+blacklist only
 #   tools/baseline_tests.sh 2            # run gmail self-send only
 #   tools/baseline_tests.sh 3            # run flight-price search only
+#   tools/baseline_tests.sh 4            # run captcha challenge only
 set -euo pipefail
 TARGET="${1:-all}"
 
@@ -25,6 +26,7 @@ export PHANTOM_BRIDGE_URL PHANTOM_BRIDGE_TOKEN
 TASK1='打开chrome, douyin.com，关注10个随机账号，然后拉黑所有我的关注列表里的男性'
 TASK2='打开chrome, 使用我的gmail发送三封随机内容测试邮件到这个gmail邮箱自己'
 TASK3='打开chrome，查询悉尼到广州一个月内最低的机票票价'
+TASK4='open chrome and find a captcha challenge somewhere on the web (search google for a captcha demo, or visit any site you know has one), then solve it to prove captcha resolving works'
 
 run_one() {
   local label="$1"; local task="$2"
@@ -42,11 +44,13 @@ run_one() {
 }
 
 case "$TARGET" in
-  1)    run_one baseline-1-douyin "$TASK1" ;;
-  2)    run_one baseline-2-gmail  "$TASK2" ;;
-  3)    run_one baseline-3-flight "$TASK3" ;;
-  all)  run_one baseline-1-douyin "$TASK1"
-        run_one baseline-2-gmail  "$TASK2"
-        run_one baseline-3-flight "$TASK3" ;;
-  *)    echo "usage: $0 {all|1|2|3}" >&2; exit 2 ;;
+  1)    run_one baseline-1-douyin  "$TASK1" ;;
+  2)    run_one baseline-2-gmail   "$TASK2" ;;
+  3)    run_one baseline-3-flight  "$TASK3" ;;
+  4)    run_one baseline-4-captcha "$TASK4" ;;
+  all)  run_one baseline-1-douyin  "$TASK1"
+        run_one baseline-2-gmail   "$TASK2"
+        run_one baseline-3-flight  "$TASK3"
+        run_one baseline-4-captcha "$TASK4" ;;
+  *)    echo "usage: $0 {all|1|2|3|4}" >&2; exit 2 ;;
 esac
