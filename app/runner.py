@@ -333,12 +333,23 @@ class TaskRunner(QThread):
                           "-draw_mouse", "1", "-i", "desktop"]
         else:
             return None
+        # `+frag_keyframe+empty_moov+default_base_moof` writes a fragmented
+        # MP4: each ~1 s GOP becomes a self-contained fragment with its own
+        # tiny index header, so any byte prefix of the file is independently
+        # decodable. Without it, the global moov atom is written ONLY at
+        # graceful shutdown (q-to-stdin), and an abrupt kill — e.g. the
+        # harness's proc.terminate() when --timeout fires — produces a
+        # 2.4 GB stream with no moov, which `ffmpeg -i` and every player
+        # rejects as "moov atom not found". Fragmented MP4 trades a few %
+        # file-size overhead for crash resistance, which we need every
+        # time the run runs to its wall-clock budget.
         cmd = [ffmpeg_exe, "-y", "-hide_banner", "-loglevel", "error",
                *input_args,
                "-c:v", "libx264",
                "-preset", "ultrafast",
                "-pix_fmt", "yuv420p",
                "-crf", "28",
+               "-movflags", "+frag_keyframe+empty_moov+default_base_moof",
                path]
         try:
             self._recorder = subprocess.Popen(
