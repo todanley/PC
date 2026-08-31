@@ -11,8 +11,7 @@ from PySide6.QtWidgets import (
     QRadioButton, QScrollArea, QSpinBox, QSplitter, QVBoxLayout, QWidget,
 )
 
-from . import wallet
-from .build_config import IS_CN_BUILD
+from . import settings as _settings
 from .platform_layer import Input
 from .runner import TaskRunner
 
@@ -128,6 +127,86 @@ QLabel#bubbleHint {
     color: #5a6072; font-size: 11px;
 }
 """
+
+
+class _SettingsDialog(QDialog):
+    """Simple dialog to configure AI provider, model, and API key.
+    Values are saved to disk so they persist across restarts."""
+
+    _PROVIDERS = [
+        ("claude (Anthropic)", "anthropic"),
+        ("gemini (Google AI Studio)", "google"),
+        ("kimi (Moonshot)", "moonshot"),
+        ("gemini via browser (free, no key)", "gemini"),
+    ]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("API Key Settings")
+        self.setMinimumWidth(520)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(14)
+        layout.setContentsMargins(24, 24, 24, 24)
+
+        from PySide6.QtWidgets import QComboBox, QLineEdit, QDialogButtonBox
+        saved = _settings.load()
+
+        # Provider picker
+        layout.addWidget(QLabel("Provider"))
+        self._provider_box = QComboBox()
+        for label, _ in self._PROVIDERS:
+            self._provider_box.addItem(label)
+        saved_prov = saved.get("provider", "")
+        for i, (_, v) in enumerate(self._PROVIDERS):
+            if v == saved_prov:
+                self._provider_box.setCurrentIndex(i)
+                break
+        layout.addWidget(self._provider_box)
+
+        # Model
+        layout.addWidget(QLabel("Model  (leave blank for default)"))
+        self._model_edit = QLineEdit(saved.get("model", ""))
+        self._model_edit.setPlaceholderText("e.g. claude-opus-4-7 / gemini-2.5-flash")
+        layout.addWidget(self._model_edit)
+
+        # API key
+        layout.addWidget(QLabel("API Key"))
+        self._key_edit = QLineEdit(saved.get("api_key", ""))
+        self._key_edit.setPlaceholderText("sk-ant-… / AIza… / sk-…")
+        self._key_edit.setEchoMode(QLineEdit.Password)
+        layout.addWidget(self._key_edit)
+
+        hint = QLabel(
+            "Claude: <a href='https://console.anthropic.com/'>console.anthropic.com</a>  ·  "
+            "Gemini: <a href='https://aistudio.google.com/'>aistudio.google.com</a>  ·  "
+            "Kimi: <a href='https://platform.moonshot.cn/'>platform.moonshot.cn</a>"
+        )
+        hint.setOpenExternalLinks(True)
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #8b9099; font-size: 14px;")
+        layout.addWidget(hint)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _save(self):
+        provider_val = self._PROVIDERS[self._provider_box.currentIndex()][1]
+        data = _settings.load()
+        data["provider"] = provider_val
+        model = self._model_edit.text().strip()
+        if model:
+            data["model"] = model
+        else:
+            data.pop("model", None)
+        key = self._key_edit.text().strip()
+        if key:
+            data["api_key"] = key
+        else:
+            data.pop("api_key", None)
+        _settings.save(data)
+        self.accept()
 
 
 class _SystemPromptDialog(QDialog):
@@ -397,29 +476,6 @@ class MainWindow(QMainWindow):
 
         layout.addSpacing(6)
 
-        # Wallet balance line (CN-ship builds only). Shows the user a masked
-        # token preview + remaining quota in dollars — never Gemini tokens.
-        # Updated from the bridge's X-Quota-Remaining-Usd header after each
-        # turn. The 更新令牌 button lets the user replace the active token
-        # at any time (not just when one runs out) — previously the label
-        # said "令牌：已设置" with no obvious affordance to change it.
-        self._last_remaining: float | None = None
-        if IS_CN_BUILD:
-            wallet_row = QHBoxLayout()
-            wallet_row.setSpacing(10)
-            self.balance_label = QLabel(self._balance_text())
-            self.balance_label.setStyleSheet("color: #8b9099; font-size: 20px;")
-            self.balance_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            wallet_row.addWidget(self.balance_label)
-            self.token_btn = QPushButton("更新令牌")
-            self.token_btn.setObjectName("linkBtn")
-            self.token_btn.setCursor(Qt.PointingHandCursor)
-            self.token_btn.clicked.connect(self._on_update_token_clicked)
-            wallet_row.addWidget(self.token_btn)
-            wallet_row.addStretch(1)
-            layout.addLayout(wallet_row)
-            layout.addSpacing(6)
-
         # Task input
         prompt_label = QLabel("想让我做什么？")
         layout.addWidget(prompt_label)
@@ -509,6 +565,12 @@ class MainWindow(QMainWindow):
             self.debug_btn.hide()
             self.sys_btn.hide()
 
+        self.settings_btn = QPushButton("⚙ API Key")
+        self.settings_btn.setObjectName("linkBtn")
+        self.settings_btn.setCursor(Qt.PointingHandCursor)
+        self.settings_btn.clicked.connect(self._on_settings_clicked)
+        ctrl_row.addWidget(self.settings_btn)
+
         layout.addLayout(ctrl_row)
         layout.addSpacing(8)
 
@@ -568,60 +630,11 @@ class MainWindow(QMainWindow):
             if w is not None:
                 w.deleteLater()
 
-    # ── Wallet token / balance ──────────────────────────────────────────
-    @staticmethod
-    def _mask_token(token: str) -> str:
-        """Render a wallet token as `pc_xxxx…yyyy` so the user can tell
-        which token is active without exposing the whole secret in case the
-        screen is being recorded or screenshared."""
-        if not token:
-            return ""
-        if len(token) <= 11:
-            return token
-        return f"{token[:7]}…{token[-4:]}"
-
-    def _balance_text(self) -> str:
-        tok = wallet.get_token() or ""
-        if not tok:
-            return "令牌：未设置 · 点击右侧「更新令牌」输入"
-        masked = self._mask_token(tok)
-        if self._last_remaining is None:
-            return f"令牌：{masked} · 余额：检测中…"
-        return f"令牌：{masked} · 余额：${self._last_remaining:.2f}"
-
-    def _refresh_balance_label(self):
-        if IS_CN_BUILD and hasattr(self, "balance_label"):
-            self.balance_label.setText(self._balance_text())
-
-    def _on_update_token_clicked(self):
-        """User explicitly asked to change the token. Prompt as normal but
-        skip the 'reason' prefix because this is a deliberate change, not
-        a recovery from an error."""
-        self._prompt_token("")
-
-    def _prompt_token(self, reason: str = "") -> bool:
-        """Modal prompt for the user's wallet token. Returns True if a token
-        was entered and stored. The main window is restored first so the
-        dialog isn't trapped behind a minimized window — that case used to
-        happen when a run minimized to the bubble, then exhausted its
-        quota, and the modal popped up under a window the user couldn't see."""
-        self.showNormal()
-        self.raise_()
-        self.activateWindow()
-        prefix = (reason + "\n\n") if reason else ""
-        tok, ok = QInputDialog.getText(
-            self, "输入令牌",
-            prefix + "请输入管理员给你的令牌（token），可在「更新令牌」按钮处随时替换：")
-        if ok and tok.strip():
-            wallet.set_token(tok.strip())
-            self._last_remaining = None
-            self._refresh_balance_label()
-            return True
-        return False
-
-    def _on_quota_updated(self, remaining: float):
-        self._last_remaining = remaining
-        self._refresh_balance_label()
+    # ── API key settings ────────────────────────────────────────────────
+    def _on_settings_clicked(self):
+        """Open the API key / provider / model settings dialog."""
+        dlg = _SettingsDialog(self)
+        dlg.exec()
 
     def _on_mode_changed(self, mode_id: int, checked: bool):
         """Toggle the interval picker + schedule note based on the selected
@@ -646,12 +659,6 @@ class MainWindow(QMainWindow):
             return
         if self._runner and self._runner.isRunning():
             return
-
-        # CN-ship builds need a wallet token before they can call the bridge.
-        if IS_CN_BUILD and not wallet.get_token():
-            if not self._prompt_token("尚未设置令牌。"):
-                self._append_log("[!] 未输入令牌，无法运行。")
-                return
 
         # Capture scheduling settings at start time so changing the spinner
         # mid-session doesn't drift the schedule.
@@ -705,7 +712,6 @@ class MainWindow(QMainWindow):
         self._runner.turn_logged.connect(self._on_turn_logged)
         self._runner.finished_ok.connect(self._on_finished_ok)
         self._runner.failed.connect(self._on_failed)
-        self._runner.quota_updated.connect(self._on_quota_updated)
         self._runner.start()
 
     def _ensure_bubble(self):
@@ -868,21 +874,6 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(2500, lambda: self._bubble and self._bubble.hide())
 
     def _on_failed(self, msg: str):
-        # Wallet/quota messages: show verbatim and prompt for a (new) token so
-        # the user can top up and rerun without restarting the app. Bubble
-        # is dismissed FIRST (before the prompt) so the user sees the
-        # token-input modal cleanly without a floating widget in the corner.
-        # _prompt_token itself restores the main window from the minimized
-        # state — important when the bubble was the only visible artifact.
-        if msg.startswith(("额度", "请输入", "令牌")):
-            if msg.startswith("额度"):
-                self._last_remaining = 0.0
-                self._refresh_balance_label()
-            self._append_log(f"✗  {msg}")
-            self._reset_buttons()
-            self._dismiss_bubble("✗  额度用完", "请输入新令牌继续")
-            self._prompt_token(msg)
-            return
         # Strip internal run-dir / video paths from failure messages so the
         # demo UI stays clean. Keep the human-readable head before the colon.
         clean = msg
@@ -898,11 +889,6 @@ class MainWindow(QMainWindow):
         self._append_log(f"✗  {clean}")
         self._reset_buttons()
         self._dismiss_bubble("✗  失败", clean)
-        # Scheduling keeps firing through failures — a transient bridge
-        # error or one bad run shouldn't kill a long-running schedule. The
-        # ONLY exception is wallet/quota messages (`额度`/`请输入`/`令牌`):
-        # those return early at the top of _on_failed BEFORE reaching here,
-        # so we don't need to special-case them.
         self._maybe_schedule_next()
 
     def _maybe_schedule_next(self):

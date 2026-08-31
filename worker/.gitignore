@@ -1,5 +1,0 @@
-wrangler.toml
-node_modules/
-.wrangler/
-*.log
-.dev.vars

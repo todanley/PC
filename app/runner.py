@@ -231,9 +231,6 @@ class TaskRunner(QThread):
     turn_logged = Signal(dict)
     finished_ok = Signal(str)
     failed = Signal(str)
-    # Remaining wallet balance in USD, pushed after each turn so the UI can
-    # show the user their quota (bridge/CN builds only).
-    quota_updated = Signal(float)
 
     def __init__(self, task: str, parent=None):
         super().__init__(parent)
@@ -636,20 +633,9 @@ class TaskRunner(QThread):
                     shot_for_model, feedback=pending_feedback,
                     mark_map=mark_map)
             except VisionError as e:
-                # Wallet/quota messages are already user-facing Chinese — emit
-                # them verbatim (the UI prompts for a token on these). Other
-                # vision errors keep the diagnostic prefix.
-                m = str(e)
-                if m.startswith(("额度", "请输入", "令牌")):
-                    self.failed.emit(m)
-                else:
-                    self.failed.emit(f"vision call failed: {m}")
+                self.failed.emit(f"vision call failed: {str(e)}")
                 return
             pending_feedback = None
-            # Push the wallet balance the bridge reported this turn to the UI.
-            rem = getattr(client, "last_remaining_usd", None)
-            if rem is not None:
-                self.quota_updated.emit(float(rem))
             # Remember the action type so the NEXT turn's inter-action pause
             # can match (type/drag get a longer "thinking" prefix, scroll is
             # short, etc.). Set before any continue/return so the next

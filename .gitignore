@@ -6,8 +6,10 @@ __pycache__/
 venv/
 .env
 .env.local
+node_modules/
+
+# Per-run artifact directories (screenshots, marked frames, turn dumps)
 phantom_run_*/
-# Self-review harness run artifacts (screenshots, marked frames, dumps).
 _runs/
 
 # Claude Code session metadata
@@ -17,6 +19,4 @@ _runs/
 build/
 dist/
 *.app/
-
-# Wrangler local state/cache (created when running the Worker locally)
-.wrangler/
+*.spec

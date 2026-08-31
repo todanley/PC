@@ -30,27 +30,15 @@ _MAX_BYTES = 4_500_000
 # if the file would exceed the API's per-image byte cap.
 _JPEG_QUALITY = int(os.environ.get("PHANTOM_JPEG_QUALITY", "75"))
 
-# Build-time config takes precedence in CN-ship builds. Operator dev mode
-# (env vars set, no baked literals) falls through to PHANTOM_MODEL.
-from app.build_config import BRIDGE_TOKEN, BRIDGE_URL, IS_CN_BUILD
-from app import wallet
+def _load_settings_once():
+    try:
+        from . import settings as _s
+        return _s.load()
+    except Exception:
+        return {}
 
-# User-facing (Chinese) messages for the wallet/quota flow. The runner matches
-# these prefixes to surface them verbatim and to trigger the token prompt.
-NO_TOKEN_MSG = "请输入令牌后再运行（向管理员购买额度）"
-QUOTA_MSG = "额度已用完，请输入新的令牌"
-
-# CN-ship build: pin model + provider + token regardless of env. The whole
-# point is "downloads and runs" — env vars don't exist in the user's world.
-# Default to gemini-3.5-flash: A/B tested against 3.1-pro on slider captchas
-# at 200% entry-zoom — Flash converged on a working drag distance in 5
-# attempts while Pro kept oscillating distances and never converged after
-# 18 tries. Flash also runs ~3-4x cheaper per turn, which matters across
-# long list-traversal tasks.
-if IS_CN_BUILD:
-    MODEL = os.environ.get("PHANTOM_MODEL_OVERRIDE", "gemini-3.5-flash")
-else:
-    MODEL = os.environ.get("PHANTOM_MODEL", "claude-opus-4-7")
+_saved = _load_settings_once()
+MODEL = os.environ.get("PHANTOM_MODEL") or _saved.get("model") or "claude-opus-4-7"
 ANTHROPIC_VERSION = "2023-06-01"
 
 # Provider routing — picked from MODEL prefix unless PHANTOM_PROVIDER overrides.
@@ -68,10 +56,7 @@ ANTHROPIC_VERSION = "2023-06-01"
 #   REST API via OpenAI-compatible endpoint. ~$0.10/$0.40 per M tokens on
 #   gemini-2.5-flash-lite, fast (~3-5s/turn), no Chromium pop-up.
 def _provider() -> str:
-    # CN-ship builds always route via google → bridge. No env overrides.
-    if IS_CN_BUILD:
-        return "google"
-    p = os.environ.get("PHANTOM_PROVIDER", "").lower()
+    p = (os.environ.get("PHANTOM_PROVIDER", "") or _saved.get("provider", "")).lower()
     if p in ("anthropic", "moonshot", "gemini", "google"):
         return p
     if MODEL.startswith(("kimi-", "moonshot-")):
@@ -93,14 +78,9 @@ API_URL = {
                                "https://api.moonshot.ai/v1/chat/completions"),
     "google":   "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
 }.get(PROVIDER, "https://api.anthropic.com/v1/messages")
-# CN-bridge support: in a CN-ship build, point at the baked bridge URL.
-# In dev, PHANTOM_API_BASE still works as an env override.
-if IS_CN_BUILD:
-    API_URL = BRIDGE_URL.rstrip("/") + "/v1beta/openai/chat/completions"
-else:
-    _API_BASE_OVERRIDE = os.environ.get("PHANTOM_API_BASE", "").strip().rstrip("/")
-    if _API_BASE_OVERRIDE and PROVIDER == "google":
-        API_URL = _API_BASE_OVERRIDE + "/v1beta/openai/chat/completions"
+_API_BASE_OVERRIDE = os.environ.get("PHANTOM_API_BASE", "").strip().rstrip("/")
+if _API_BASE_OVERRIDE and PROVIDER == "google":
+    API_URL = _API_BASE_OVERRIDE + "/v1beta/openai/chat/completions"
 # Path to the Gemini CLI tool (only used when PROVIDER == "gemini").
 GEMINI_CLI = os.path.expanduser(
     os.environ.get("PHANTOM_GEMINI_CLI", "~/.claude/tools/gemini.py")
@@ -254,31 +234,19 @@ class VisionClient:
 
     def __init__(self, task: str, screen_size, api_key: str = None):
         self.task = task
-        # Per-provider key resolution. The legacy ANTHROPIC_API_KEY env name
-        # is reused for moonshot/anthropic for backwards-compat with existing
-        # launchers; google uses its own GEMINI_API_KEY so both can coexist.
-        # CN-ship builds: baked bridge token always wins — no env var dance.
-        if IS_CN_BUILD:
-            # Bearer = the user's prepaid wallet token. Dev override
-            # PHANTOM_BRIDGE_TOKEN (BRIDGE_TOKEN) lets operator runs skip the
-            # in-app prompt; an explicit api_key arg wins (tests).
-            self.api_key = api_key or wallet.get_token() or BRIDGE_TOKEN
-        elif PROVIDER == "google":
-            self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        from . import settings as _settings
+        if PROVIDER == "google":
+            self.api_key = api_key or os.environ.get("GEMINI_API_KEY") or _settings.get_api_key()
         else:
-            self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+            self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY") or _settings.get_api_key()
         if PROVIDER == "gemini":
             if not os.path.exists(GEMINI_CLI):
                 raise VisionError(f"Gemini CLI not found at {GEMINI_CLI}")
         elif not self.api_key:
-            if IS_CN_BUILD:
-                # No wallet token entered yet — UI will prompt for one.
-                raise VisionError(NO_TOKEN_MSG)
             key_name = "GEMINI_API_KEY" if PROVIDER == "google" else "ANTHROPIC_API_KEY"
-            raise VisionError(f"{key_name} not set")
-        # Remaining wallet balance (USD) parsed from the bridge's
-        # X-Quota-Remaining-Usd response header; None until the first call.
-        self.last_remaining_usd: float | None = None
+            raise VisionError(
+                f"API key not set. Export {key_name} or use ⚙ Settings in the app."
+            )
         plat, primary_mod = _platform_strings()
         self.logical_w, self.logical_h = screen_size
         self._last_progress: str = ""  # echoed back to the model each turn
@@ -696,26 +664,11 @@ class VisionClient:
         for attempt in range(len(backoffs) + 1):
             try:
                 with urllib.request.urlopen(req, timeout=300, context=_SSL_CTX) as resp:
-                    # Bridge echoes the wallet's remaining balance (USD) so the
-                    # UI can show the user their own quota, never Gemini tokens.
-                    rem = resp.headers.get("X-Quota-Remaining-Usd")
-                    if rem is not None:
-                        try:
-                            self.last_remaining_usd = float(rem)
-                        except ValueError:
-                            pass
                     payload = json.loads(resp.read())
                 break
             except urllib.error.HTTPError as e:
                 body_bytes = e.read()
                 msg = body_bytes[:300].decode("utf-8", "ignore")
-                # 402 = wallet token out of quota. Won't recover on retry —
-                # surface the friendly Chinese message so the UI prompts for a
-                # new token. (Only the bridge returns 402, and only for an
-                # exhausted balance.)
-                if e.code == 402:
-                    self.last_remaining_usd = 0.0
-                    raise VisionError(QUOTA_MSG)
                 last_err = VisionError(f"http {e.code}: {msg}")
                 # Retry on 429 (rate limit / overloaded) and 5xx (server)
                 if e.code == 429 or 500 <= e.code < 600:
