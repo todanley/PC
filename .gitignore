@@ -10,6 +10,15 @@ phantom_run_*/
 # Self-review harness run artifacts (screenshots, marked frames, dumps).
 _runs/
 
+# Top-level scratch: agent run console logs (_runs_*.log), demo recordings
+# (_demo_*.mp4/avi/wmv), inspection screenshots (_mark*.png, _popup_*.png,
+# _fresh_launch*.png, _send_*.png, _step*.png, _v4_*.png, _bubble_*.png,
+# _misclick_*.png, _dynow.png, _verify__*.png), build/probe helpers
+# (_build_*, _frag_*, _recovery_*). Tracked _research/ is unaffected — its
+# entries were committed before this rule and gitignore never untracks.
+/_*
+worker/_*.bin
+
 # Claude Code session metadata
 .claude/
 
