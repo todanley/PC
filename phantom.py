@@ -327,7 +327,7 @@ class PhantomScreen:
 
 # ─── Vision (Claude) ────────────────────────────────────────────────────
 #
-# phantom-click uses CLAUDE'S vision exclusively. Gemini support has been
+# UnboundComputerUse uses CLAUDE'S vision exclusively. Gemini support has been
 # removed — it was unreliable for dense UI (off-by-one tabs, wrong cards)
 # and slow (30–90s/call via web-UI scraping).
 #
@@ -370,7 +370,7 @@ class ClaudeVision:
                 "action": "error",
                 "reasoning": (
                     "Vision requires Claude. Either set ANTHROPIC_API_KEY for "
-                    "autopilot mode, or use phantom-click interactively from a "
+                    "autopilot mode, or use UnboundComputerUse interactively from a "
                     "Claude Code chat — let Claude read the screenshot and emit "
                     "`phantom.py click X Y` commands directly. Gemini is not used."
                 ),

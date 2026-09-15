@@ -1,6 +1,6 @@
 # Windows Handoff
 
-The macOS side of phantom-click is fully working and shipped. The Windows
+The macOS side of UnboundComputerUse is fully working and shipped. The Windows
 `.exe` built by CI **does not work** on a real Windows machine (user-confirmed
 2026-05-19). This document is everything a Claude Code instance running on
 Windows needs to pick up the work.
@@ -23,14 +23,14 @@ binary so they "just open and run" — no env vars, no settings UI.
 
 ```
 CN user's machine
-    └── phantom-click.exe
+    └── UnboundComputerUse.exe
             │  POST /v1beta/openai/chat/completions
             │  Authorization: Bearer pc_sV2X… (baked into the binary)
-            │  User-Agent: phantom-click/0.1.0  (must be set or CF Bot Fight Mode 403s)
+            │  User-Agent: UnboundComputerUse/0.1.0  (must be set or CF Bot Fight Mode 403s)
             ▼
         https://bridge.z1nexusn1.org/*
-            │  Cloudflare Worker — phantom-click-bridge
-            │  Verifies bearer against D1 (phantom-click-tokens)
+            │  Cloudflare Worker — UnboundComputerUse-bridge
+            │  Verifies bearer against D1 (UnboundComputerUse-tokens)
             │  Atomic UPDATE bumps daily counter, enforces max_calls_per_day
             │  Re-signs Authorization header with GEMINI_API_KEY secret
             ▼
@@ -48,7 +48,7 @@ share the same backend.
 ## 3. Repo layout — Windows-relevant files
 
 ```
-phantom-click/
+UnboundComputerUse/
 ├── app/
 │   ├── main.py                  Qt entry. _install_clean_shutdown wires
 │   │                            aboutToQuit / closeEvent so the TaskRunner
@@ -72,19 +72,19 @@ phantom-click/
 │       ├── mac.py               Quartz CGEvent input + screencapture.
 │       └── win.py               pyautogui + mss. *** This is the file most
 │                                likely to have a bug on real Windows. ***
-├── phantom-click.spec           PyInstaller spec. Conditional on
+├── unboundcomputeruse.spec           PyInstaller spec. Conditional on
 │                                sys.platform: BUNDLE() runs only on macOS;
 │                                hiddenimports swaps Quartz/AppKit/objc for
 │                                pyautogui/mss/win32* on Windows.
 ├── phantom_click_main.py        Entry point wrapper (sidesteps PyInstaller's
 │                                "no parent package" issue with relative imports).
 ├── build-win.ps1                PowerShell build script: bakes config,
-│                                runs PyInstaller, zips dist\噜噜机器人-win.zip.
+│                                runs PyInstaller, zips dist\UnboundComputerUse-win.zip.
 ├── requirements-app.txt         Has sys_platform markers — pyobjc-* on darwin,
 │                                pywin32 on win32. numpy is also needed.
 ├── .github/workflows/build.yml  Matrix build (macos-14 + windows-latest).
 │                                Bakes secrets from repo settings, uploads
-│                                artifacts as phantom-click-{mac,win}.
+│                                artifacts as UnboundComputerUse-{mac,win}.
 └── docs/WINDOWS_HANDOFF.md      This file.
 ```
 
@@ -95,7 +95,7 @@ already live), `build-mac.sh`, `phantom.py` (Mac-only Quartz primitives).
 ## 4. What's verified working
 
 - **macOS side**: builds via `./build-mac.sh`, launches, runs tasks, exits
-  cleanly on Cmd+Q without SIGABRT, ships as `dist/噜噜机器人-mac.zip`.
+  cleanly on Cmd+Q without SIGABRT, ships as `dist/UnboundComputerUse-mac.zip`.
 - **CI Mac build**: GitHub Actions `macos-14` job produces an identical
   artifact, user confirmed it works after download.
 - **Worker + D1 + tokens**: 100+ successful Gemini calls forwarded; daily
@@ -107,7 +107,7 @@ already live), `build-mac.sh`, `phantom.py` (Mac-only Quartz primitives).
 ## 5. What's broken
 
 **The Windows `.exe` doesn't work.** User-reported "doesn't work" on a real
-Windows machine after downloading the CI artifact `phantom-click-win`.
+Windows machine after downloading the CI artifact `UnboundComputerUse-win`.
 Specific failure mode not yet captured — that's the first thing to find out.
 
 ## 6. First diagnostic step (DO THIS FIRST)
@@ -130,7 +130,7 @@ $env:PHANTOM_BRIDGE_TOKEN = "pc_sV2XYmHT1i1k8qiB53Ohv7dSJx1U8xep"
 .\build-win.ps1
 
 # Run from PowerShell so stderr / Python tracebacks are visible
-.\dist\噜噜机器人\phantom-click.exe
+.\dist\UnboundComputerUse\UnboundComputerUse.exe
 ```
 
 What to look for:
@@ -150,7 +150,7 @@ suppresses it):
 
 ```powershell
 # Temporarily flip the spec to keep a console for debugging:
-# In phantom-click.spec, change `console=False,` to `console=True,` then
+# In unboundcomputeruse.spec, change `console=False,` to `console=True,` then
 # rebuild. The .exe will open a CMD window alongside the GUI showing all
 # stdout/stderr in real time. Revert before shipping.
 ```
@@ -158,24 +158,24 @@ suppresses it):
 ## 7. Suspect failure modes (ranked by probability)
 
 1. **Qt platform plugin not bundled** — PySide6's `qwindows.dll` must be
-   present in `dist\噜噜机器人\PySide6\plugins\platforms\`. If missing, the
+   present in `dist\UnboundComputerUse\PySide6\plugins\platforms\`. If missing, the
    app exits with `qt.qpa.plugin: Could not find the Qt platform plugin
    "windows"`. Fix: PyInstaller's PySide6 hook usually handles this; if not,
    add `--collect-all PySide6` to the spec or COLLECT(...) call.
 
-2. **Missing hiddenimport** — phantom-click.spec includes the obvious
+2. **Missing hiddenimport** — unboundcomputeruse.spec includes the obvious
    `pyautogui`, `mss`, `win32api/con/gui` for Windows. pyautogui transitively
    depends on `pyscreeze`, `pymsgbox`, `pytweening`, `mouseinfo` — those
    may need to be added explicitly if PyInstaller's analyser misses them.
    Symptom: ImportError in PowerShell stderr.
 
-3. **Chinese folder name `噜噜机器人` confusing some Windows code path** —
+3. **Chinese folder name `UnboundComputerUse` confusing some Windows code path** —
    if the user's system locale is non-Unicode, the folder name may render
    garbled and tools that don't handle UTF-8 paths fail. Worth testing
-   by renaming the folder to ASCII (e.g. `phantom-click`) and seeing if
+   by renaming the folder to ASCII (e.g. `UnboundComputerUse`) and seeing if
    that fixes it. If yes, output the COLLECT folder under an ASCII name on
-   Windows (see `phantom-click.spec` — already does `name='噜噜机器人' if
-   IS_WIN else 'phantom-click'`; might need to flip that).
+   Windows (see `unboundcomputeruse.spec` — already does `name='UnboundComputerUse' if
+   IS_WIN else 'UnboundComputerUse'`; might need to flip that).
 
 4. **High-DPI coordinate mismatch** — both screenshot and click must be in
    the same coordinate space. On Windows 10/11 with non-100% display scale:
@@ -228,7 +228,7 @@ suppresses it):
 # Rebuild
 .\build-win.ps1
 # Run
-.\dist\噜噜机器人\phantom-click.exe
+.\dist\UnboundComputerUse\UnboundComputerUse.exe
 # When it works, commit + push
 git add . ; git commit -m "fix(win): <what>" ; git push
 # CI rebuilds both platforms on push; download artifacts to verify
@@ -238,7 +238,7 @@ To trigger CI manually without pushing:
 ```
 gh workflow run build.yml --repo todanley/PC --ref main
 gh run watch --repo todanley/PC --exit-status
-gh run download --repo todanley/PC --name phantom-click-win
+gh run download --repo todanley/PC --name UnboundComputerUse-win
 ```
 
 ## 10. Where the GEMINI_API_KEY lives (so you don't accidentally leak it)
@@ -252,7 +252,7 @@ gh run download --repo todanley/PC --name phantom-click-win
 
 ## 11. Status checklist for "Windows .exe ready to ship"
 
-- [ ] `.\dist\噜噜机器人\phantom-click.exe` launches and shows the GUI window
+- [ ] `.\dist\UnboundComputerUse\UnboundComputerUse.exe` launches and shows the GUI window
 - [ ] Typing a task in the input box and clicking 运行 makes a successful
       call to the Worker (verified via `wrangler tail` showing
       `event:"forward"` for `public-pool`)
@@ -262,8 +262,8 @@ gh run download --repo todanley/PC --name phantom-click-win
       crash dialog)
 - [ ] No new crash entries in Windows Event Viewer → Windows Logs →
       Application after the run + close cycle
-- [ ] Cold-run of the CI-built `dist/噜噜机器人-win.zip` after extracting
-      to e.g. `Desktop\噜噜机器人\` works the same as a locally-built run
+- [ ] Cold-run of the CI-built `dist/UnboundComputerUse-win.zip` after extracting
+      to e.g. `Desktop\UnboundComputerUse\` works the same as a locally-built run
 - [ ] User can complete one real task (e.g. "打开计算器算 17×24") with the
       shipped zip on a clean Windows machine they don't usually develop on
 

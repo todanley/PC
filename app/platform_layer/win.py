@@ -299,7 +299,7 @@ class Input:
         directly), but minor versions occasionally bump the suffix from
         `_1` to `_2`. Prefix-matching covers everything and avoids
         per-browser allowlists. Returns False when the foreground is a
-        non-browser window (Phantom-Click GUI, terminal, IDE, native app).
+        non-browser window (UnboundComputerUse GUI, terminal, IDE, native app).
         Never raises."""
         try:
             import win32gui
@@ -354,7 +354,7 @@ class Input:
         relying on the SYSTEM_PROMPT bullet (which gemini-3.5-flash and other
         instruction-following-light models can skip), the runner just enforces
         it. Limited to browser windows so we never accidentally maximize the
-        Phantom-Click GUI / terminal / IDE that happens to be the foreground.
+        UnboundComputerUse GUI / terminal / IDE that happens to be the foreground.
         Never raises.
         """
         try:

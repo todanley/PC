@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build a CN-shippable macOS .app bundle of phantom-click (噜噜机器人).
+# Build a CN-shippable macOS .app bundle of UnboundComputerUse.
 #
 # Required env:
 #   PHANTOM_BRIDGE_URL    — full URL of your bridge tunnel
@@ -8,8 +8,8 @@
 #                           (mint with: python3 -m bridge.issue_token public-pool --max-per-day 5000)
 #
 # Output:
-#   dist/噜噜机器人.app          ← the bundle (drag to /Applications)
-#   dist/噜噜机器人-mac.zip      ← zipped, ready to upload for download
+#   dist/UnboundComputerUse.app          ← the bundle (drag to /Applications)
+#   dist/UnboundComputerUse-mac.zip      ← zipped, ready to upload for download
 #
 # What it does:
 #   1. Validates env, checks pyinstaller installed.
@@ -94,9 +94,9 @@ echo "→ build_config baked: BRIDGE_URL=$PHANTOM_BRIDGE_URL (no token baked; us
 rm -rf build dist
 
 echo "→ running PyInstaller (this takes 1-3 min on first build) …"
-python3 -m PyInstaller lulubot.spec --noconfirm --clean
+python3 -m PyInstaller unboundcomputeruse.spec --noconfirm --clean
 
-APP="dist/噜噜机器人.app"
+APP="dist/UnboundComputerUse.app"
 if [[ ! -d "$APP" ]]; then
     echo "error: PyInstaller didn't produce $APP" >&2
     exit 1
@@ -145,14 +145,14 @@ codesign --verify --verbose=1 "$APP" 2>&1 | tail -3 || true
 # --- 5. Zip for distribution ------------------------------------------------
 
 cd dist
-ZIP="噜噜机器人-mac.zip"
+ZIP="UnboundComputerUse-mac.zip"
 rm -f "$ZIP"
 # `ditto` preserves macOS extended attributes (signature, quarantine flags)
 # which `zip` would strip and ruin the bundle.
-ditto -c -k --sequesterRsrc --keepParent "噜噜机器人.app" "$ZIP"
+ditto -c -k --sequesterRsrc --keepParent "UnboundComputerUse.app" "$ZIP"
 cd ..
 
-SIZE=$(du -sh "dist/噜噜机器人-mac.zip" | awk '{print $1}')
+SIZE=$(du -sh "dist/UnboundComputerUse-mac.zip" | awk '{print $1}')
 APP_SIZE=$(du -sh "$APP" | awk '{print $1}')
 
 cat <<EOF
@@ -166,7 +166,7 @@ cat <<EOF
 
   CN user flow:
     1. Download dist/$ZIP
-    2. Unzip → drag 噜噜机器人.app to /Applications
+    2. Unzip → drag UnboundComputerUse.app to /Applications
     3. First open: right-click → 打开 (bypasses Gatekeeper warning once)
     4. Grant Screen Recording + Accessibility when prompted
     5. Type task, press 运行

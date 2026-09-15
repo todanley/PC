@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""DEPRECATED — Gemini path was removed from phantom-click.
+"""DEPRECATED — Gemini path was removed from UnboundComputerUse.
 
-phantom-click now uses Claude vision only (see `claude_vision.py` and the
+UnboundComputerUse now uses Claude vision only (see `claude_vision.py` and the
 ClaudeVision class in phantom.py).
 
 Reasons Gemini was dropped:
@@ -16,9 +16,9 @@ import sys
 
 if __name__ == "__main__":
     print(
-        "ERROR: gemini_vision.py is deprecated. phantom-click uses Claude "
+        "ERROR: gemini_vision.py is deprecated. UnboundComputerUse uses Claude "
         "vision only — either set ANTHROPIC_API_KEY and use claude_vision.py, "
-        "or drive phantom-click interactively from a Claude Code chat where "
+        "or drive UnboundComputerUse interactively from a Claude Code chat where "
         "Claude reads the screenshot and emits click commands.",
         file=sys.stderr,
     )

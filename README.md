@@ -1,8 +1,8 @@
-# LuLuBot 噜噜机器人
+# UnboundComputerUse UnboundComputerUse
 
 **A semi-computer-use desktop automation agent powered by AI vision.**
 
-LuLuBot watches your screen, decides one action at a time with a vision-capable LLM, and drives your mouse & keyboard through OS-level input APIs. It works across native apps, browsers, games, and legacy software — anything with pixels on your display.
+UnboundComputerUse watches your screen, decides one action at a time with a vision-capable LLM, and drives your mouse & keyboard through OS-level input APIs. It works across native apps, browsers, games, and legacy software — anything with pixels on your display.
 
 Bring your own API key from Anthropic, Google, or Moonshot; nothing runs through a hosted backend.
 
@@ -37,7 +37,7 @@ Bring your own API key from Anthropic, Google, or Moonshot; nothing runs through
 
 Full "computer-use" agents (e.g. Anthropic's `computer_20250124` tool, browser-use, playwright-based agents) often combine vision with DOM/accessibility trees, `set-of-mark` overlays, or browser-extension hooks to help the model target elements.
 
-LuLuBot deliberately does **not**. Each turn is:
+UnboundComputerUse deliberately does **not**. Each turn is:
 
 1. **Capture** — one raw screenshot of the display.
 2. **Ask** — send the screenshot + task + history to a vision LLM.
@@ -99,7 +99,7 @@ The runner (`app/runner.py`) also:
 - **Set-of-Mark mode** (opt-in) for pixel-hostile UIs — OCR + icon contour overlays.
 - **Windows UI Automation source** (opt-in) — pulls accessibility labels for even richer marks.
 - **Knowledge base injection** — `app/knowledge.md` is appended to the system prompt every turn, so app-specific quirks (e.g. Douyin's follow-count location) are learned once and reused forever.
-- **PyInstaller packaging** — ships as `LuLuBot.app` / `LuLuBot.exe`.
+- **PyInstaller packaging** — ships as `UnboundComputerUse.app` / `UnboundComputerUse.exe`.
 
 ---
 
@@ -130,8 +130,8 @@ Provider is inferred from the model prefix (`claude-*` → anthropic, `kimi-*` �
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/todanley/PC.git lulubot
-cd lulubot
+git clone https://github.com/todanley/PC.git unbound-computer-use
+cd unbound-computer-use
 python3 -m venv .venv
 source .venv/bin/activate         # Windows PowerShell: .venv\Scripts\Activate.ps1
 pip install -r requirements-app.txt
@@ -165,8 +165,8 @@ export PHANTOM_MODEL=kimi-k2.5
 Launch the app and click **⚙ API Key** in the toolbar. Fill in provider, model, and key. Settings persist to your local config folder — never sent anywhere except directly to your chosen AI provider on each turn.
 
 Config folder:
-- macOS: `~/Library/Application Support/LuLuBot/settings.json`
-- Windows: `%LOCALAPPDATA%\LuLuBot\settings.json`
+- macOS: `~/Library/Application Support/UnboundComputerUse/settings.json`
+- Windows: `%LOCALAPPDATA%\UnboundComputerUse\settings.json`
 
 ### 3. Run
 
@@ -178,7 +178,7 @@ python3 -m app.main
 
 ## Running a task
 
-1. Launch LuLuBot.
+1. Launch UnboundComputerUse.
 2. In the task input, describe what you want in natural language, e.g.:
    - `Open Chrome, go to news.ycombinator.com, and read the top comment on the top story.`
    - `In Notion, create a new page titled "Weekly review" with today's date.`
@@ -330,7 +330,7 @@ Console logs from prior runs are kept under `_runs_baseline_*` for post-mortem d
 
 System Settings → **Privacy & Security**:
 
-- **Screen Recording** — grant to your terminal (dev) or `LuLuBot.app` (packaged). Without this, screenshots are blank.
+- **Screen Recording** — grant to your terminal (dev) or `UnboundComputerUse.app` (packaged). Without this, screenshots are blank.
 - **Accessibility** — grant to the same. Without this, mouse/keyboard events silently no-op.
 - **Automation** (as prompted) — for `PHANTOM_FOCUS_APP`'s AppleScript `System Events` calls.
 
@@ -338,7 +338,7 @@ You'll need to fully quit and relaunch after granting.
 
 ### Windows
 
-- Run as a regular user. If your target app is elevated (Admin), LuLuBot must be too, or SendInput events are silently dropped by UIPI.
+- Run as a regular user. If your target app is elevated (Admin), UnboundComputerUse must be too, or SendInput events are silently dropped by UIPI.
 - Windows Defender may flag the PyInstaller bundle. Sign it, or exclude the folder.
 
 ---
@@ -355,20 +355,20 @@ pip install pyinstaller
 
 ```bash
 pyinstaller --noconfirm --onedir --windowed \
-  --name LuLuBot \
+  --name UnboundComputerUse \
   --add-data "app/knowledge.md:app" \
   app/main.py
-# Output: dist/LuLuBot/LuLuBot.app
+# Output: dist/UnboundComputerUse/UnboundComputerUse.app
 ```
 
 **Windows (PowerShell):**
 
 ```powershell
 pyinstaller --noconfirm --onedir --windowed `
-  --name LuLuBot `
+  --name UnboundComputerUse `
   --add-data "app/knowledge.md;app" `
   app/main.py
-# Output: dist\LuLuBot\LuLuBot.exe
+# Output: dist\UnboundComputerUse\UnboundComputerUse.exe
 ```
 
 Notes:
@@ -389,7 +389,7 @@ app/
   humanize.py        — Mouse-path jitter and per-character type delays
   som.py             — Set-of-Mark overlay (RapidOCR text + OpenCV icon contours + UIA merge)
   uia_win.py         — Windows UI Automation accessibility element source (SoM enrichment)
-  settings.py        — Local JSON settings (~/Library/Application Support/LuLuBot/ or %LOCALAPPDATA%\LuLuBot\)
+  settings.py        — Local JSON settings (~/Library/Application Support/UnboundComputerUse/ or %LOCALAPPDATA%\UnboundComputerUse\)
   knowledge.md       — Domain knowledge appended to the system prompt each turn
   platform_layer/
     __init__.py      — capabilities(), platform-appropriate Input & Screen exports
@@ -462,7 +462,7 @@ Add `--collect-all rapidocr_onnxruntime` to your `pyinstaller` command.
 ## FAQ
 
 **Does it upload anything besides screenshots?**
-Screenshots + your task text + turn history go to your chosen provider on each turn. Nothing goes anywhere else. No LuLuBot backend exists.
+Screenshots + your task text + turn history go to your chosen provider on each turn. Nothing goes anywhere else. No UnboundComputerUse backend exists.
 
 **Can it interact with password fields / 2FA?**
 Yes — it can type into any focused text field. Whether that's a good idea is up to you. The recorded `screen.mp4` will contain anything on screen; if you don't want that, set `PHANTOM_RECORD=0`.
@@ -477,13 +477,13 @@ Simple UI-driven ones, yes. Anything requiring reaction time under ~2 s, no — 
 Depends on provider, model, screenshot resolution, and task length. A 20-turn Claude Opus task at retina resolution is ~$0.20–$0.50. The same task on Gemini 2.5 Flash Lite is ~$0.01–$0.03. Kimi K2.5 sits in between. Set `PHANTOM_JPEG_QUALITY=60` and `PHANTOM_MAX_STEPS` to cap costs.
 
 **Does it work with the Anthropic `computer_20250124` tool?**
-No — LuLuBot uses regular `/v1/messages` with vision, not the beta computer-use tool. Coordinates are chosen by the model from raw pixels.
+No — UnboundComputerUse uses regular `/v1/messages` with vision, not the beta computer-use tool. Coordinates are chosen by the model from raw pixels.
 
 ---
 
 ## Safety notes
 
-LuLuBot has full mouse and keyboard control of your machine while running. Some baseline hygiene:
+UnboundComputerUse has full mouse and keyboard control of your machine while running. Some baseline hygiene:
 
 - **Don't leave it running unattended on important sessions.** A confused model will happily click "Delete Account" if the task ambiguously asks for cleanup.
 - **Prefer a scratch user account** for exploratory automation.

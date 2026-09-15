@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec — cross-platform packaging for LuLuBot.
+"""PyInstaller spec — cross-platform packaging for UnboundComputerUse.
 
 Run via `./build-mac.sh` on macOS or `./build-win.ps1` on Windows (both inject
 build_config first). Don't invoke pyinstaller on this directly without the
@@ -98,7 +98,7 @@ if IS_WIN:
         a.zipfiles,
         a.datas,
         [],
-        name='LuLuBot',
+        name='UnboundComputerUse',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
@@ -112,7 +112,7 @@ else:
     exe = EXE(
         pyz, a.scripts, [],
         exclude_binaries=True,
-        name='LuLuBot',
+        name='UnboundComputerUse',
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
@@ -131,24 +131,24 @@ else:
         strip=False,
         upx=False,
         upx_exclude=[],
-        name='LuLuBot',
+        name='UnboundComputerUse',
     )
     app = BUNDLE(
         coll,
-        name='噜噜机器人.app',
+        name='UnboundComputerUse.app',
         icon=None,
-        bundle_identifier='com.phantomclick.lulu',
+        bundle_identifier='com.unboundcomputeruse.app',
         info_plist={
-            'CFBundleName': '噜噜机器人',
-            'CFBundleDisplayName': '噜噜机器人',
+            'CFBundleName': 'UnboundComputerUse',
+            'CFBundleDisplayName': 'UnboundComputerUse',
             'CFBundleShortVersionString': '0.1.0',
             'CFBundleVersion': '0.1.0',
             # Required for macOS to grant Screen Recording on first capture.
             'NSScreenCaptureUsageDescription':
-                '噜噜机器人需要"屏幕录制"权限来截取屏幕并理解界面，然后替你完成任务。',
+                'UnboundComputerUse needs Screen Recording permission to capture the screen and understand its content in order to complete tasks for you.',
             # Apple Events (AppleScript) for window focus management.
             'NSAppleEventsUsageDescription':
-                '噜噜机器人需要权限来切换前台窗口，以便它能操控你指定的应用。',
+                'UnboundComputerUse needs permission to switch the foreground window so it can control the app you specify.',
             # Sending mouse/keyboard events triggers macOS Accessibility prompt.
             # That permission has no Info.plist key — the user grants it via
             # System Settings → Privacy & Security → Accessibility on first

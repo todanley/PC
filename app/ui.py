@@ -1,4 +1,4 @@
-"""PySide6 UI for Phantom-Click."""
+"""PySide6 UI for UnboundComputerUse."""
 import json
 import os
 import threading
@@ -274,7 +274,7 @@ class _StatusBubble(QWidget):
         v.setContentsMargins(18, 14, 18, 14)
         v.setSpacing(4)
 
-        self._header = QLabel("噜噜机器人  ·  准备中…")
+        self._header = QLabel("UnboundComputerUse  ·  准备中…")
         self._header.setObjectName("bubbleHeader")
         v.addWidget(self._header)
 
@@ -311,7 +311,7 @@ class _StatusBubble(QWidget):
                   geo.bottom() - self.height() - margin)
 
     def set_step(self, step: int, action_label: str, detail: str):
-        self._header.setText(f"噜噜机器人  ·  步骤 {step}")
+        self._header.setText(f"UnboundComputerUse  ·  步骤 {step}")
         self._action.setText(action_label)
         # Truncate long reasoning so the bubble stays compact.
         if detail and len(detail) > 140:
@@ -323,7 +323,7 @@ class _StatusBubble(QWidget):
     def set_status(self, text: str, detail: str = ""):
         """Generic status (e.g. 'completed', 'failed'). Used for the
         terminal frame before auto-hide."""
-        self._header.setText("噜噜机器人")
+        self._header.setText("UnboundComputerUse")
         self._action.setText(text)
         self._detail.setText(detail or "")
         self._detail.setVisible(bool(detail))
@@ -353,7 +353,7 @@ class _StatusBubble(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("噜噜机器人")
+        self.setWindowTitle("UnboundComputerUse")
         self.setMinimumSize(1400, 820)
         self.setStyleSheet(DARK_QSS)
         self._runner: TaskRunner | None = None
@@ -387,7 +387,7 @@ class MainWindow(QMainWindow):
 
         # Title — pin the family explicitly so Qt doesn't fall back to a
         # different Chinese face just for the big bold heading.
-        title = QLabel("噜噜机器人")
+        title = QLabel("UnboundComputerUse")
         title.setFont(QFont("Microsoft YaHei UI", 49, QFont.Bold))
         layout.addWidget(title)
 

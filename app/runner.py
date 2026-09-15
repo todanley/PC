@@ -523,7 +523,7 @@ class TaskRunner(QThread):
             # flash, claude-haiku, kimi) skip it under load. Doing it
             # runner-side removes the decision: if Chrome is the foreground
             # and not already maximized, we maximize via Win32 ShowWindow.
-            # Other foreground windows (Phantom-Click GUI, terminal, IDE) are
+            # Other foreground windows (UnboundComputerUse GUI, terminal, IDE) are
             # left alone. On macOS the method is a no-op (the platform's
             # 'maximize' enters fullscreen which is worse for the agent).
             try:

@@ -1,4 +1,4 @@
-"""macOS input/screen via existing phantom-click primitives."""
+"""macOS input/screen via existing UnboundComputerUse primitives."""
 import os
 import sys
 

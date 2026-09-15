@@ -1,4 +1,4 @@
-"""LuLuBot desktop app entry point."""
+"""UnboundComputerUse desktop app entry point."""
 import os
 import sys
 
@@ -31,7 +31,7 @@ def _prompt_token_on_launch_if_missing(win: MainWindow) -> None:
 
     def _ask():
         win._prompt_token(
-            "欢迎使用噜噜机器人。\n首次启动还没有令牌，请向管理员索取后输入：")
+            "欢迎使用UnboundComputerUse。\n首次启动还没有令牌，请向管理员索取后输入：")
 
     QTimer.singleShot(600, _ask)
 
@@ -52,7 +52,7 @@ def _wire_autorun(win: MainWindow) -> None:
         win._append_log = _mirror
 
     if os.environ.get("PHANTOM_AUTORUN") == "1" and task:
-        # Minimize so the agent's screenshots don't include the Phantom-Click
+        # Minimize so the agent's screenshots don't include the UnboundComputerUse
         # window itself — otherwise the model sees its own log ("Step N:
         # capturing screen…") and waits for it.
         def _go():
@@ -88,7 +88,7 @@ def _install_clean_shutdown(app: QApplication, win: MainWindow) -> None:
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("LuLuBot")
+    app.setApplicationName("UnboundComputerUse")
     win = MainWindow()
     _install_clean_shutdown(app, win)
     _wire_autorun(win)

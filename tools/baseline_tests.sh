@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Baseline test suite for LuLuBot. Three end-to-end tasks that exercise
+# Baseline test suite for UnboundComputerUse. Three end-to-end tasks that exercise
 # the production paths the user cares about most:
 #
 #   1. Douyin social-graph: follow N + filter-by-attribute on a list

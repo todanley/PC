@@ -1,4 +1,4 @@
-# Marketing site (lulurobot)
+# Marketing site (UnboundComputerUse)
 
 Static Astro site served at `www.z1nexusn1.org` and the apex `z1nexusn1.org`,
 on Cloudflare Pages. Pure HTML/CSS + ~15 lines of JS that fetches the current
@@ -19,10 +19,10 @@ npm run build    # → dist/
 www.z1nexusn1.org           → Cloudflare Pages (this site)
 z1nexusn1.org (apex)        → same Pages deployment (redirect / mirror)
 downloads.z1nexusn1.org     → Cloudflare R2 public bucket
-   ├── lulurobot-mac-vX.Y.Z.zip
-   ├── lulurobot-win-vX.Y.Z.zip
-   ├── lulurobot-mac-latest.zip   ← site links here
-   ├── lulurobot-win-latest.zip   ← site links here
+   ├── UnboundComputerUse-mac-vX.Y.Z.zip
+   ├── UnboundComputerUse-win-vX.Y.Z.zip
+   ├── UnboundComputerUse-mac-latest.zip   ← site links here
+   ├── UnboundComputerUse-win-latest.zip   ← site links here
    └── version.json               ← read at runtime to show current version
 bridge.z1nexusn1.org/*      → Cloudflare Worker (already deployed)
 ```

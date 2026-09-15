@@ -21,12 +21,12 @@ jobs:
           - os: macos-14         # Apple Silicon runner
             label: mac
             script: ./build-mac.sh
-            artifact_path: dist/噜噜机器人-mac.zip
+            artifact_path: dist/UnboundComputerUse-mac.zip
           - os: windows-latest
             label: win
             # PowerShell on Windows; bash on macOS — the call sites differ.
             script: pwsh -File ./build-win.ps1
-            artifact_path: dist/LuLuBot.exe
+            artifact_path: dist/UnboundComputerUse.exe
 
     runs-on: ${{ matrix.os }}
     name: build-${{ matrix.label }}
@@ -59,7 +59,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: phantom-click-${{ matrix.label }}
+          name: unbound-computer-use-${{ matrix.label }}
           path: ${{ matrix.artifact_path }}
           if-no-files-found: error
           retention-days: 30
@@ -77,8 +77,8 @@ jobs:
   # (versioned + `-latest` alias), writes version.json so the marketing
   # site can read the current release, then deploys the static site to
   # Cloudflare Pages. Direct downloads land at:
-  #   https://downloads.z1nexusn1.org/lulurobot-{mac,win}-vX.Y.Z.{zip,exe}
-  #   https://downloads.z1nexusn1.org/lulurobot-{mac,win}-latest.{zip,exe}
+  #   https://downloads.z1nexusn1.org/UnboundComputerUse-{mac,win}-vX.Y.Z.{zip,exe}
+  #   https://downloads.z1nexusn1.org/UnboundComputerUse-{mac,win}-latest.{zip,exe}
   # The marketing site always links to `-latest`, so no rewrite of the
   # site is needed for a routine release.
   publish:
@@ -89,6 +89,11 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Legacy identifiers: R2 bucket and Pages project were provisioned under
+      # the phantom-click / lulurobot names before the UnboundComputerUse
+      # rename. Renaming these requires re-provisioning the CF resources +
+      # DNS/domain re-binding — leave as-is so existing deployments keep
+      # working. Migrate in a dedicated infra change if desired.
       R2_BUCKET: phantom-click-downloads
       PAGES_PROJECT: lulurobot-site
     steps:
@@ -97,13 +102,13 @@ jobs:
       - name: Download mac artifact
         uses: actions/download-artifact@v4
         with:
-          name: phantom-click-mac
+          name: unbound-computer-use-mac
           path: artifacts/mac/
 
       - name: Download win artifact
         uses: actions/download-artifact@v4
         with:
-          name: phantom-click-win
+          name: unbound-computer-use-win
           path: artifacts/win/
 
       - name: Resolve version from tag
@@ -114,32 +119,32 @@ jobs:
       # the tool we use for the worker — same auth model, same CLI surface,
       # one fewer dependency to manage in CI.
       #
-      # File naming reflects the LuLuBot rename: the inner Mac binary is
-      # `LuLuBot`, the .app stays `噜噜机器人.app` for the user-facing
-      # bundle name, the Windows artifact is a onefile `LuLuBot.exe`.
+      # Both binaries carry the UnboundComputerUse name: the inner Mac binary
+      # is `UnboundComputerUse`, the .app bundle is `UnboundComputerUse.app`,
+      # and the Windows artifact is a onefile `UnboundComputerUse.exe`.
       - name: Upload Mac zip to R2 (versioned + latest alias)
         run: |
           MAC_ZIP=$(find artifacts/mac -type f -name '*.zip' | head -1)
           [ -n "$MAC_ZIP" ] || { echo "no mac zip"; exit 1; }
           npx --yes wrangler r2 object put \
-            "$R2_BUCKET/LuLuBot-mac-v${{ steps.ver.outputs.version }}.zip" \
+            "$R2_BUCKET/UnboundComputerUse-mac-v${{ steps.ver.outputs.version }}.zip" \
             --file "$MAC_ZIP" --content-type application/zip --remote
           npx --yes wrangler r2 object put \
-            "$R2_BUCKET/LuLuBot-mac-latest.zip" \
+            "$R2_BUCKET/UnboundComputerUse-mac-latest.zip" \
             --file "$MAC_ZIP" --content-type application/zip --remote
 
       - name: Upload Win exe to R2 (versioned + latest alias)
-        # build-win.ps1 emits onefile dist/LuLuBot.exe (no zip layer); upload
+        # build-win.ps1 emits onefile dist/UnboundComputerUse.exe (no zip layer); upload
         # as application/octet-stream so browsers prompt download instead of
         # attempting to render it.
         run: |
           WIN_EXE=$(find artifacts/win -type f -name '*.exe' | head -1)
           [ -n "$WIN_EXE" ] || { echo "no win exe"; exit 1; }
           npx --yes wrangler r2 object put \
-            "$R2_BUCKET/LuLuBot-v${{ steps.ver.outputs.version }}.exe" \
+            "$R2_BUCKET/UnboundComputerUse-v${{ steps.ver.outputs.version }}.exe" \
             --file "$WIN_EXE" --content-type application/octet-stream --remote
           npx --yes wrangler r2 object put \
-            "$R2_BUCKET/LuLuBot-latest.exe" \
+            "$R2_BUCKET/UnboundComputerUse-latest.exe" \
             --file "$WIN_EXE" --content-type application/octet-stream --remote
 
       - name: Write version.json manifest
@@ -148,12 +153,12 @@ jobs:
           {
             "version": "${{ steps.ver.outputs.version }}",
             "released_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "mac_url": "https://downloads.z1nexusn1.org/LuLuBot-mac-v${{ steps.ver.outputs.version }}.zip",
-            "win_url": "https://downloads.z1nexusn1.org/LuLuBot-v${{ steps.ver.outputs.version }}.exe",
+            "mac_url": "https://downloads.z1nexusn1.org/UnboundComputerUse-mac-v${{ steps.ver.outputs.version }}.zip",
+            "win_url": "https://downloads.z1nexusn1.org/UnboundComputerUse-v${{ steps.ver.outputs.version }}.exe",
             "latest": {
-              "mac": "https://downloads.z1nexusn1.org/LuLuBot-mac-latest.zip",
-              "win_r2": "https://downloads.z1nexusn1.org/LuLuBot-latest.exe",
-              "win_proxy": "https://bridge.z1nexusn1.org/download/LuLuBot.exe"
+              "mac": "https://downloads.z1nexusn1.org/UnboundComputerUse-mac-latest.zip",
+              "win_r2": "https://downloads.z1nexusn1.org/UnboundComputerUse-latest.exe",
+              "win_proxy": "https://bridge.z1nexusn1.org/download/UnboundComputerUse.exe"
             }
           }
           EOF

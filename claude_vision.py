@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude vision helper for phantom-click autopilot.
+"""Claude vision helper for UnboundComputerUse autopilot.
 
 Two modes:
   1. INTERACTIVE (default in Claude Code): do not call this — let Claude in
@@ -23,7 +23,7 @@ import urllib.error
 API_URL = "https://api.anthropic.com/v1/messages"
 MODEL = "claude-opus-4-7"
 
-PROMPT_TMPL = """You are computing pixel coordinates for a phantom-click automation script driving a macOS desktop.
+PROMPT_TMPL = """You are computing pixel coordinates for a UnboundComputerUse automation script driving a macOS desktop.
 
 Task: {instruction}
 

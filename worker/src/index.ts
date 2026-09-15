@@ -23,13 +23,13 @@ interface Env {
     DB: D1Database;
     GEMINI_API_KEY: string;
     // GitHub PAT with `repo` scope on the private todanley/PC repo. The
-    // /download/LuLuBot.exe handler uses it to fetch the latest release
+    // /download/UnboundComputerUse.exe handler uses it to fetch the latest release
     // asset server-side so CN users only ever connect to bridge.z1nexusn1.org
     // (which is verified working in China; github.com / objects.githubusercontent.com
     // are not reliably reachable). Store via:
     //   wrangler secret put GH_TOKEN
     GH_TOKEN: string;
-    // GitHub Release asset ID for the current LuLuBot.exe. Bumped each
+    // GitHub Release asset ID for the current UnboundComputerUse.exe. Bumped each
     // build via `wrangler secret put LULUBOT_ASSET_ID`. Looking up the
     // latest release dynamically would also work but locks us into the
     // GitHub API rate limit on every download, which is cheaper to dodge.
@@ -44,7 +44,7 @@ const UPSTREAM =
 // is tiered: a cheaper rate for prompts up to ~200k tokens, a higher rate above
 // it. VERIFY these against Google's current pricing page before relying on the
 // margin — they're a single dated constant block on purpose.
-//   (values as of 2026-05; phantom-click sends ~1-2k prompt tokens/turn so the
+//   (values as of 2026-05; UnboundComputerUse sends ~1-2k prompt tokens/turn so the
 //    low tier dominates; the high tier is defensive.)
 interface Price {
     inLowUusdPerM: number;
@@ -112,7 +112,7 @@ export default {
             return Response.json({ ok: true, worker: true });
         }
 
-        // CN-accessible download proxy for the built LuLuBot.exe.
+        // CN-accessible download proxy for the built UnboundComputerUse.exe.
         // The artifact is published on GitHub Releases (which is unreliable
         // from inside China), so we proxy through Cloudflare's edge — CN
         // users only ever connect to bridge.z1nexusn1.org which is verified
@@ -121,7 +121,7 @@ export default {
         // back. Cloudflare's CDN caches the response so repeat downloads
         // hit the edge instead of GitHub.
         //
-        // Stable URL for handout: https://bridge.z1nexusn1.org/download/LuLuBot.exe
+        // Stable URL for handout: https://bridge.z1nexusn1.org/download/UnboundComputerUse.exe
         // Migrate to R2 once the operator enables R2 on the CF account.
         //
         // GitHub release-asset downloads on PRIVATE repos require auth.
@@ -129,13 +129,13 @@ export default {
         // a 302 to a short-lived signed objects.githubusercontent.com URL,
         // then we fetch that signed URL withOUT our Authorization header
         // (sending it would make S3 reject the request as overspecified).
-        if (url.pathname === "/download/LuLuBot.exe" && request.method === "GET") {
+        if (url.pathname === "/download/UnboundComputerUse.exe" && request.method === "GET") {
             const apiUrl = `https://api.github.com/repos/todanley/PC/releases/assets/${env.LULUBOT_ASSET_ID}`;
             const step1 = await fetch(apiUrl, {
                 headers: {
                     Authorization: `Bearer ${env.GH_TOKEN}`,
                     Accept: "application/octet-stream",
-                    "User-Agent": "LuLuBot-bridge",
+                    "User-Agent": "UnboundComputerUse-bridge",
                 },
                 redirect: "manual",
             });
@@ -164,7 +164,7 @@ export default {
             headers.set("content-type", "application/octet-stream");
             const cl = upstream.headers.get("content-length");
             if (cl) headers.set("content-length", cl);
-            headers.set("content-disposition", 'attachment; filename="LuLuBot.exe"');
+            headers.set("content-disposition", 'attachment; filename="UnboundComputerUse.exe"');
             headers.set("cache-control", "no-store");
             return new Response(upstream.body, {
                 status: upstream.status,

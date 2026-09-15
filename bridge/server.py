@@ -28,7 +28,7 @@ TOKENS_FILE = BRIDGE_DIR / "tokens.json"
 ACCESS_LOG = BRIDGE_DIR / "access.log"
 
 UPSTREAM = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
-UPSTREAM_TIMEOUT_S = 600  # match phantom-click's urlopen timeout
+UPSTREAM_TIMEOUT_S = 600  # match UnboundComputerUse's urlopen timeout
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 if not GEMINI_API_KEY:
@@ -39,7 +39,7 @@ if not GEMINI_API_KEY:
 
 # Per-IP rate limit: how many requests per IP per window.
 # Defaults give a single CN user plenty of headroom for a long task
-# (phantom-click bursts ~1 req/s during a fast run) while stopping a single
+# (UnboundComputerUse bursts ~1 req/s during a fast run) while stopping a single
 # abuser from draining the daily pool in minutes.
 RATE_LIMIT_PER_IP = int(os.environ.get("BRIDGE_RATE_LIMIT_PER_IP", "30"))
 RATE_LIMIT_WINDOW_S = int(os.environ.get("BRIDGE_RATE_LIMIT_WINDOW_S", "60"))
@@ -99,10 +99,10 @@ def _log(record: dict) -> None:
         fh.write(line + "\n")
 
 
-app = FastAPI(title="phantom-click gemini bridge")
+app = FastAPI(title="UnboundComputerUse gemini bridge")
 
 # Single shared httpx client — connection pooling matters when the same CN
-# client fires 10+ turns in a single phantom-click run.
+# client fires 10+ turns in a single UnboundComputerUse run.
 _HTTP = httpx.AsyncClient(timeout=UPSTREAM_TIMEOUT_S, http2=True)
 
 

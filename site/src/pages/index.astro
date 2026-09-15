@@ -1,5 +1,5 @@
 ---
-// Single-page CN landing for 噜噜机器人. Static; no JS framework needed.
+// Single-page CN landing for UnboundComputerUse. Static; no JS framework needed.
 // Download URLs point at the R2 public bucket served on downloads.z1nexusn1.org.
 // `version.json` (also served from R2) carries the canonical current version
 // string; the CI build script rewrites it on every release. The hardcoded
@@ -13,8 +13,8 @@ const FALLBACK_VERSION = "0.2.0";
 //     CF's CDN. This sidesteps GitHub's CN reachability quirks and works
 //     today without R2 enabled. The Mac side will likely migrate to the
 //     same Worker-proxy pattern once we add a Mac endpoint.
-const MAC_URL = "https://downloads.z1nexusn1.org/LuLuBot-mac-latest.zip";
-const WIN_URL = "https://bridge.z1nexusn1.org/download/LuLuBot.exe";
+const MAC_URL = "https://downloads.z1nexusn1.org/UnboundComputerUse-mac-latest.zip";
+const WIN_URL = "https://bridge.z1nexusn1.org/download/UnboundComputerUse.exe";
 const VERSION_JSON_URL = "https://downloads.z1nexusn1.org/version.json";
 ---
 <!doctype html>
@@ -22,9 +22,9 @@ const VERSION_JSON_URL = "https://downloads.z1nexusn1.org/version.json";
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>噜噜机器人 — 让 AI 替你操作电脑</title>
-<meta name="description" content="一句话描述任务，噜噜机器人替你点击、输入、滚动 — 自动完成日常电脑工作。" />
-<meta property="og:title" content="噜噜机器人" />
+<title>UnboundComputerUse — 让 AI 替你操作电脑</title>
+<meta name="description" content="一句话描述任务，UnboundComputerUse替你点击、输入、滚动 — 自动完成日常电脑工作。" />
+<meta property="og:title" content="UnboundComputerUse" />
 <meta property="og:description" content="让 AI 替你操作电脑" />
 <style>
   :root {
@@ -108,7 +108,7 @@ const VERSION_JSON_URL = "https://downloads.z1nexusn1.org/version.json";
 <body>
 <div class="wrap">
   <header>
-    <div class="logo">噜噜<span>机器人</span></div>
+    <div class="logo">Unbound<span>ComputerUse</span></div>
     <nav>
       <a href="#features">功能</a>
       <a href="#examples">示例</a>
@@ -119,7 +119,7 @@ const VERSION_JSON_URL = "https://downloads.z1nexusn1.org/version.json";
   <section class="hero">
     <h1>让 AI 替你<br/>操作电脑。</h1>
     <p class="sub">
-      输入一句话描述任务，噜噜机器人替你点击、输入、滚动、跨应用切换 —
+      输入一句话描述任务，UnboundComputerUse替你点击、输入、滚动、跨应用切换 —
       从打开浏览器，到批量操作社交账号，全程无需你动手。
     </p>
     <div class="cta">
@@ -191,7 +191,7 @@ const VERSION_JSON_URL = "https://downloads.z1nexusn1.org/version.json";
   </section>
 
   <footer>
-    <div>© 2026 噜噜机器人</div>
+    <div>© 2026 UnboundComputerUse</div>
     <div>v<span id="ver-foot">{FALLBACK_VERSION}</span></div>
   </footer>
 </div>

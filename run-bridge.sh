@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start the phantom-click Gemini bridge + Cloudflare tunnel.
+# Start the UnboundComputerUse Gemini bridge + Cloudflare tunnel.
 #
 # Two modes, auto-detected:
 #   • named tunnel (stable URL): if bridge/cloudflared.yml exists. Set it up
@@ -126,7 +126,7 @@ MODE="quick (ephemeral)"
 cat <<EOF
 
 =============================================================
-  phantom-click Gemini bridge is LIVE  [$MODE]
+  UnboundComputerUse Gemini bridge is LIVE  [$MODE]
 =============================================================
   public URL : $PUBLIC_URL
   local      : http://127.0.0.1:$PORT
