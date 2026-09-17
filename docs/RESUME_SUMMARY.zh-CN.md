@@ -45,6 +45,7 @@
 - 构建了一个**面向中国大陆的下载代理**：由于 `github.com` / `objects.githubusercontent.com` 在中国大陆时常被封锁 / 限速，Worker 先用 PAT 发起 GitHub Releases API 的两段式重定向流程（带鉴权 302 → 无鉴权访问签名 S3 URL），再把私有仓库产物通过 Cloudflare 边缘节点流式回传给用户。
 - 搭建了 **GitHub Actions 矩阵构建**（`macos-14` + `windows-latest`）→ PyInstaller → 上传到 R2（带版本号 + `-latest` 别名双 key）→ 生成 `version.json` 清单 → 用 wrangler 部署 Astro 营销站点到 Cloudflare Pages，一切由 tag push 触发。
 - 在 Mac 开发阶段还搭过一个**已退役的 FastAPI + cloudflared 桥**（每 IP 滑动窗口速率限制、通过 `asyncio.Lock` 原子写 tokens.json、逐请求 access log），随后迁移到 Worker 上。
+- **设计了远程优先的 RAG 层**，直接嵌入现有 Worker 请求路径，客户端零额外往返、零包体积增量：把 `app/knowledge.md` 按 `## App:` 标题以及跨站点通用规则切成 300–500 token 的 chunk，正文存 **D1**，向量存 **Cloudflare Vectorize**（按从截图 OCR / 地址栏推断出的当前应用做元数据过滤），每回合服务端取 top-K，然后在转发上游前拼装最终 prompt。用相关的 300–500 token 片段替换当前 `knowledge.md` 约 4K token 的整段注入 —— 显著降低每回合的 token 成本，客户端感知不到任何延迟变化。明确否决了本地优先方案（SQLite + `sqlite-vec` + 设备端 MiniLM ONNX）—— 判断依据是：本项目每次视觉调用都必须联网，"离线能力"并不成立，本地化只会平白增加复杂度。写入流程是一个 `pnpm knowledge:push` 脚本（`worker/` 目录下的 Node/TS），diff D1、通过托管嵌入 API 嵌入变更 chunk 后原子写入 D1 + Vectorize —— 修一条知识几秒钟上线，无需重新构建客户端。
 
 ## 客户端 UI（PySide6，约 950 行）
 
@@ -71,3 +72,4 @@
 - 实现了一条**无需检测面暴露的元素定位管线**，融合 OCR、边缘轮廓提议与 Windows UI Automation，显著降低了密集多语种 UI 上的误点率，并将 Chromium DOM 作为一等公民接入到可访问性结构中。
 - 通过在验证码路径上对视觉模型做 A/B 测试，把中国发布版默认模型从 Gemini Pro 切到 Flash，在不损失任务成功率的前提下把单轮 API 成本降低了**约 4 倍**。
 - 设计了一整套**基于 Cloudflare 的后端**（Worker + D1 钱包 + R2 + Pages + 通过边缘反代的私有仓库下载），能够绕过 GitHub 在中国大陆的时断时续，稳定分发给国内用户，同时支持原子化的预付费计量与按模型的差异化加价。
+- **在架构决策上敢于反直觉** —— 把 RAG 层设计为**远程优先、嵌入现有 Worker 请求路径**，而不是照搬桌面 AI 应用常见的本地优先模式；判断依据是本项目每回合都需要联网做视觉调用，"离线能力"根本不成立，本地化只会徒增复杂度。副产物：`pnpm knowledge:push` 几秒钟就能上线一条新知识，客户端完全不需要重新构建。
