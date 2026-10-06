@@ -107,7 +107,7 @@ The runner (`app/runner.py`) also:
 
 | Provider | Model examples | Key env var | Notes |
 |---|---|---|---|
-| **Anthropic (Claude)** | `claude-opus-4-7`, `claude-sonnet-4-6`, `claude-haiku-4-5` | `ANTHROPIC_API_KEY` | Default. Best accuracy, highest cost. |
+| **Anthropic (Claude)** | `claude-sonnet-5`, `claude-opus-5`, `claude-haiku-4-5` | `ANTHROPIC_API_KEY` | Default (Sonnet 5). Highest published OSWorld score of any flagship (~88% OSWorld-Verified) at reasonable cost. |
 | **Google AI Studio (Gemini)** | `gemini-2.5-flash`, `gemini-2.5-flash-lite` | `GEMINI_API_KEY` | Fastest turn (~3–5 s), cheap. Set `PHANTOM_PROVIDER=google`. |
 | **Moonshot (Kimi)** | `kimi-k2.5`, `kimi-k2.6` | `ANTHROPIC_API_KEY` (reused) | ~25× cheaper than Claude Opus per input token. OpenAI-compatible. |
 | **Gemini via browser** | any `gemini-*` | none | Drives `gemini.google.com` via Playwright using your logged-in Chrome cookies. Free under a Gemini Pro subscription. Slower (~30–60 s/turn) and a Chromium window pops up. Requires the CLI at `~/.claude/tools/gemini.py` — see `PHANTOM_GEMINI_CLI`. |
@@ -241,7 +241,7 @@ Every knob is an env var. The most-used ones are also editable in the **⚙ API 
 |---|---|---|
 | `ANTHROPIC_API_KEY` | — | Claude or Kimi API key (env name reused for Moonshot). |
 | `GEMINI_API_KEY` | — | Google AI Studio key. Presence flips `gemini-*` models from browser to API. |
-| `PHANTOM_MODEL` | `claude-opus-4-7` | Any model ID your provider accepts. |
+| `PHANTOM_MODEL` | `claude-sonnet-5` | Any model ID your provider accepts. |
 | `PHANTOM_PROVIDER` | auto | `anthropic` / `google` / `moonshot` / `gemini`. |
 | `PHANTOM_API_BASE` | provider default | Override the base URL (proxy / self-hosted gateway). |
 | `PHANTOM_MOONSHOT_URL` | `api.moonshot.ai/...` | Set to `api.moonshot.cn/...` for Chinese-region Moonshot keys. |

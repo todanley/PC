@@ -21,7 +21,7 @@ import urllib.request
 import urllib.error
 
 API_URL = "https://api.anthropic.com/v1/messages"
-MODEL = "claude-opus-4-7"
+MODEL = "claude-sonnet-5"
 
 PROMPT_TMPL = """You are computing pixel coordinates for a UnboundComputerUse automation script driving a macOS desktop.
 

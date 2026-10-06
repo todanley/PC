@@ -99,7 +99,7 @@ def _dump_turn(screenshot_path: str, system: str, user_text: str, response_text:
 if IS_CN_BUILD:
     MODEL = os.environ.get("PHANTOM_MODEL_OVERRIDE", "gemini-3.5-flash")
 else:
-    MODEL = os.environ.get("PHANTOM_MODEL", "claude-opus-4-7")
+    MODEL = os.environ.get("PHANTOM_MODEL", "claude-sonnet-5")
 ANTHROPIC_VERSION = "2023-06-01"
 
 # Provider routing — picked from MODEL prefix unless PHANTOM_PROVIDER overrides.
