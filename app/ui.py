@@ -693,10 +693,19 @@ class MainWindow(QMainWindow):
         # over for status reporting. The harness's PHANTOM_AUTORUN path
         # already minimizes from app/main.py — for direct GUI runs we do
         # the same here so the demo flow is identical.
+        #
+        # SKIP the floating status bubble under PHANTOM_AUTORUN=1. The bubble
+        # is an interactive-demo UX widget — in autorun / harness mode there
+        # is no human watcher, and the bubble appears INSIDE the agent's own
+        # screenshots sitting on top of the UI it's trying to drive. Observed
+        # consequence: on an ultra-wide display the bubble landed in the
+        # top-right over Douyin's video-detail modal and blocked the X-close
+        # as well as per-video Post-comment buttons the agent needed to click.
         if self._minimize_on_run:
-            self._ensure_bubble()
-            self._bubble.set_step(0, "▶  正在启动…", task[:140])
-            self._bubble.show()
+            if os.environ.get("PHANTOM_AUTORUN") != "1":
+                self._ensure_bubble()
+                self._bubble.set_step(0, "▶  正在启动…", task[:140])
+                self._bubble.show()
             self.showMinimized()
 
         self._runner = TaskRunner(task)

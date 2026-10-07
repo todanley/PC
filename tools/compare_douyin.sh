@@ -56,7 +56,9 @@ echo "task:    $TASK"
 echo "log:     $LOG"
 echo "=========================================================="
 
-.venv/Scripts/python.exe tools/run_and_review.py \
+# Cross-platform venv python: Mac/Linux at .venv/bin/python, Windows at .venv/Scripts/python.exe
+PY=.venv/bin/python; [ -x "$PY" ] || PY=.venv/Scripts/python.exe
+"$PY" tools/run_and_review.py \
   --task "$TASK" \
   --label "$LABEL" \
   --chrome-profile "Profile 3" \

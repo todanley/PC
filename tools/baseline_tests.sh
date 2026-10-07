@@ -11,11 +11,12 @@
 # and turn dumps land in _runs/<ts>_<label>/ as usual.
 #
 # Usage:
-#   tools/baseline_tests.sh all          # run all four sequentially
+#   tools/baseline_tests.sh all          # run all five sequentially
 #   tools/baseline_tests.sh 1            # run douyin follow+blacklist only
 #   tools/baseline_tests.sh 2            # run gmail self-send only
 #   tools/baseline_tests.sh 3            # run flight-price search only
 #   tools/baseline_tests.sh 4            # run captcha challenge only
+#   tools/baseline_tests.sh 5            # run douyin search + comment on top 10 videos only
 set -euo pipefail
 TARGET="${1:-all}"
 
@@ -27,6 +28,7 @@ TASK1='打开chrome, douyin.com，关注10个随机美食账号，然后拉黑�
 TASK2='打开chrome, 使用我的gmail发送三封随机内容测试邮件到这个gmail邮箱自己'
 TASK3='打开chrome，查询悉尼到广州一个月内最低的机票票价'
 TASK4='open chrome and find a captcha challenge somewhere on the web (search google for a captcha demo, or visit any site you know has one), then solve it to prove captcha resolving works'
+TASK5="打开chrome, douyin.com然后搜索爹系男友，再在前十个视频评论区评论'181 A8见面爆金币'"
 
 run_one() {
   local label="$1"; local task="$2"
@@ -35,7 +37,9 @@ run_one() {
   echo "baseline: $label"
   echo "task: $task"
   echo "=========================================================="
-  .venv/Scripts/python.exe tools/run_and_review.py \
+  # Cross-platform venv python: Mac/Linux at .venv/bin/python, Windows at .venv/Scripts/python.exe
+  PY=.venv/bin/python; [ -x "$PY" ] || PY=.venv/Scripts/python.exe
+  "$PY" tools/run_and_review.py \
     --task "$task" \
     --label "$label" \
     --max-steps 250 \
@@ -44,13 +48,15 @@ run_one() {
 }
 
 case "$TARGET" in
-  1)    run_one baseline-1-douyin  "$TASK1" ;;
-  2)    run_one baseline-2-gmail   "$TASK2" ;;
-  3)    run_one baseline-3-flight  "$TASK3" ;;
-  4)    run_one baseline-4-captcha "$TASK4" ;;
-  all)  run_one baseline-1-douyin  "$TASK1"
-        run_one baseline-2-gmail   "$TASK2"
-        run_one baseline-3-flight  "$TASK3"
-        run_one baseline-4-captcha "$TASK4" ;;
-  *)    echo "usage: $0 {all|1|2|3|4}" >&2; exit 2 ;;
+  1)    run_one baseline-1-douyin   "$TASK1" ;;
+  2)    run_one baseline-2-gmail    "$TASK2" ;;
+  3)    run_one baseline-3-flight   "$TASK3" ;;
+  4)    run_one baseline-4-captcha  "$TASK4" ;;
+  5)    run_one baseline-5-dycomment "$TASK5" ;;
+  all)  run_one baseline-1-douyin   "$TASK1"
+        run_one baseline-2-gmail    "$TASK2"
+        run_one baseline-3-flight   "$TASK3"
+        run_one baseline-4-captcha  "$TASK4"
+        run_one baseline-5-dycomment "$TASK5" ;;
+  *)    echo "usage: $0 {all|1|2|3|4|5}" >&2; exit 2 ;;
 esac
