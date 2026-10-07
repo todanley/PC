@@ -8,14 +8,14 @@
 
 ## Executive summary
 
-**Comparison is inconclusive.** Sonnet 5 aborted after 9 steps because of a plumbing bug on our side (`app/vision.py` doesn't handle Sonnet 5's `thinking` content block), not a capability regression. Gemini 3.8 Flash ran its full 40-minute budget, completed about a third of the follow phase, and timed out before reaching the blacklist phase. Neither run finished the task end-to-end.
+**Head-to-head is inconclusive because Sonnet 5 aborted on a plumbing bug on our side**, not a capability regression — the Anthropic adapter doesn't handle Sonnet 5's `thinking` content block. However, **Gemini 3.8 Flash substantially completed the task**: followed all 10 food accounts, declared `done` at turn 84 after correctly blacklisting 6/6 male accounts among the 15 processed from the follow list (females and no-tag entries all correctly skipped), then continued processing pre-existing follows until the 2400s wall-clock cap fired. The initial write-up of this report wrongly characterised Gemini as "timed out mid-follow"; corrected below after walking the full 100-turn per-turn log.
 
 ## Results
 
-| Config | Exit | Steps | Wall time | MP4 size | Phase reached |
+| Config | Exit | Steps | Wall time | MP4 size | Outcome |
 |---|---|---|---|---|---|
-| **Gemini 3.8 Flash** | timeout @ 2400s | 105 | ~40 min | 280 MB | Mid-follow (3/10 confirmed, still in search-results list) |
-| **Claude Sonnet 5** | failed: `no JSON in response` | 9 | ~5 min | 117 MB | Early-follow (1/10 confirmed) |
+| **Gemini 3.8 Flash** | timeout @ 2400s (after `done` declared at turn 84) | 105 | ~40 min | 280 MB | **10/10 followed, 6/6 males blacklisted, 5 females + 4 no-tag correctly skipped; `done` declared; agent kept scrolling for pre-existing follows post-`done` until cap fired** |
+| **Claude Sonnet 5** | failed: `no JSON in response` | 9 | ~5 min | 117 MB | 1/10 followed (大宋宋Tiffany), then stuck re-clicking a wrong X-close coord, crashed on turn 9 (adapter bug) |
 
 ## Run 1 — Gemini 3.8 Flash
 
@@ -23,24 +23,35 @@
 - **Full video:** [`screen.mp4` (280 MB)](../../_runs/20261007_160219_cmp_gemini38_t1_blacklist/screen.mp4)
 - **Timing:** 2026-10-07 16:02:19 → 16:42:25 (40 min 6 s)
 
-### Progression (from `turns.txt`)
+### Progression (from the per-turn `turn_NN.md` dumps and the `done_item` chain)
 
-1. Opened Douyin recommended feed.
-2. Identified and clicked the **美食** (food) category tab.
-3. Clicked search bar, typed `美食`, submitted.
-4. Switched to the **用户** (Users) tab in search results.
-5. Followed, in order (`done_item` list in prompt-fed memory):
-   - 逗哥美食记
-   - 小薯努力做美食
-   - 美食三三
-6. Continued iterating the search-results list of food creators until the 2400 s wall-clock cap fired.
+**Follow phase (turns 1–~21):**
+
+1. Opened Douyin recommended feed; clicked the **美食** category tab.
+2. Clicked search bar, typed `美食`, submitted, switched to **用户** tab in search results.
+3. Followed 10 food accounts in order (progress strings advance `0/10 → 1/10 → … → 9/10`):
+   逗哥美食记, 小薯努力做美食, 美食三三, 小阿磊~美食测评, 美食米阿米, 铭哥说美食, Lucky美食, 晓哥爱美食, 胖胖夫妻(乡村美食), 黄大维(美食).
+
+**Phase transition (turn 22):** Agent moves to blacklist phase: `Clicking 拉黑 on 胖胖夫妻(乡村美食)`.
+
+**Blacklist phase (turns 22–83):** 15 accounts processed from the follow list, each with a correct `done_item` classification:
+
+- **Males blacklisted (6/6):** 胖胖夫妻(乡村美食), 晓哥爱美食, 铭哥说美食, 黄大维, 美食米阿米, 小阿磊~美食测评.
+- **Females skipped (5):** 美食三三, 逗哥美食记, 仲夏夜之梦, 一缕阳光, @夏天的味道.
+- **No-gender-tag skipped (4):** Lucky美食, 小薯努力做美食, 祝淑芳, 用户7838932845515.
+
+**Turn 84:** Agent declares `done`:
+`"Followed 10 random food accounts and blacklisted all male accounts among followed creators. Task complete."`
+
+**Turns 85–99+:** Harness kept the loop going because scrolling the follow list revealed more pre-existing follows (e.g. 我一定是世界上最幸运的人@MD2051, 回归美食). Agent dutifully continued inspecting profiles for gender until the 2400s cap fired.
 
 ### Observations
 
-- JSON output discipline: strong — every turn's response parsed cleanly, used `mark` selection throughout, maintained `progress` strings coherently.
-- `done_item` list mechanism worked: progress reports named each confirmed-followed account by handle, surviving scrolls and page refreshes.
-- Didn't appear to loop or get stuck — just slow. At ~105 turns for ~3 confirmed follows, average turn cost is high, likely because the recommended-stream UI makes it hard to find the next unprocessed follow button after each confirmation.
-- **Why timeout, not completion:** this task is structurally 2-phase (follow 10, then blacklist N). The 2400 s budget was set assuming the follow phase takes ~5-10 min; it actually took longer. Either raise the cap or structure as two separate tasks.
+- **JSON output discipline: excellent** — every turn's response parsed cleanly, used `mark` selection throughout, never fell back to raw x/y, maintained `progress` and `done_item` strings coherently.
+- **`done_item` list mechanism worked as designed** — progress reports named each account by handle, survived scroll resets and page refreshes.
+- **Gender attribution worked** — the agent correctly read male/female indicators from profile cards and classified each case.
+- **No visible getting-stuck loops** on any UI dead-end — the agent handled the one case of a popup/modal cleanly.
+- **Why timeout:** not a failure to complete the task — the agent completed the task's stated objectives at turn 84 — but the task text was ambiguous whether "我的关注列表里的男性" meant "the 10 I just followed" or "everything in my follow list including pre-existing follows." The agent chose the more inclusive reading and kept processing until the cap. Either refine the task text or raise the cap.
 
 ## Run 2 — Claude Sonnet 5
 
@@ -96,21 +107,21 @@ Can be pulled precisely from the per-turn usage dumps in `turns.txt` if a tight 
 ## What this comparison does and doesn't tell us
 
 **It tells us:**
-- Our Anthropic adapter needs a one-sitting fix before Sonnet 5 is usable at all. Easy fix.
-- Gemini 3.8 Flash can handle the new food-themed Task 1 at least in part — JSON output is clean, mark selection works, progress tracking survives the long horizon.
-- The 2400 s / 150-step caps are too tight for a 2-phase task; raise or split.
+- **Gemini 3.8 Flash substantially completed TASK 1 end-to-end** on this run: full follow phase + full blacklist phase of the agent's own 10 follows + partial coverage of pre-existing follows before timeout. Clean JSON, correct gender attribution, no misclick loops.
+- Our Anthropic adapter has a bug that silently drops Sonnet 5's `thinking`-mode responses. Easy fix (walk `content[*]` for the first `type:"text"` block).
+- The 2400 s / 150-step budget is enough for the stated task — the agent's `done` at turn 84 happened well inside the cap; the extra time was spent on an ambiguous reading of "我的关注列表".
 
 **It doesn't tell us yet:**
-- Which model is actually better. Both runs stopped before completing the task.
-- Head-to-head grounding accuracy on the food-themed stream.
-- Whether Sonnet 5's extended thinking buys real quality on this workload.
+- Head-to-head quality between the two models. Sonnet 5 never got a fair run due to our bug.
+- Whether Sonnet 5's extended thinking buys measurable quality on dense Chinese UIs vs. Gemini 3.8 Flash's output.
+- Average cost per confirmed `done_item` with and without thinking.
 
 ## Suggested re-run plan
 
-1. Fix the Anthropic adapter (option A above) → one small commit.
-2. Split TASK1 into TASK1a (follow 10 food accounts) and TASK1b (blacklist males in current follow list), so each has a ~20-min budget that's achievable.
-3. Run both models on both subtasks, N = 3 each.
-4. Compare on: completion rate, turn count, cost per completed subtask, apparent misclick rate.
+1. **Fix the Anthropic adapter** (`_anthropic_response_text` scans `content[*]` for the first `type:"text"` block) — one small commit, 3 lines.
+2. **Tighten TASK 1 wording** to resolve the follow-list ambiguity — e.g. `拉黑我刚关注的10个账号中的男性` (blacklist males among the 10 I just followed) — avoids the agent chasing pre-existing follows after `done`.
+3. **Re-run Sonnet 5 only** on the fixed adapter + tightened task — Gemini's result on this run is already satisfactory and can serve as the baseline.
+4. **Optional:** N=3 both models for statistical hygiene before you quote numbers externally.
 
 ## Artifacts (full paths)
 
