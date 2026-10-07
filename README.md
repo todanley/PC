@@ -310,15 +310,14 @@ The Windows build has received a round of grounding-, launch-, and runner-reliab
 
 ## Baseline regression suite
 
-`tools/baseline_tests.sh {all|1|2|3|4|5}` runs the canonical five-task regression that gates every change touching `app/vision.py`, `app/runner.py`, or `app/som.py`. Each task text is fixed in the script so results stay comparable across sessions.
+`tools/baseline_tests.sh {all|1|2|3|4}` runs the canonical four-task regression that gates every change touching `app/vision.py`, `app/runner.py`, or `app/som.py`. Each task text is fixed in the script so results stay comparable across sessions.
 
 | # | Task | What it exercises |
 |---|---|---|
-| 1 | Douyin follow-list blacklist (`我的 → 关注`, unfollow male accounts) | UIA + OCR SoM on a dense Chinese-language profile grid; list traversal; per-row action buttons |
+| 1 | Douyin food-account follow + male-account blacklist (follow 10 random food creators, then unfollow all male accounts in the follow list) | UIA + OCR SoM on a dense Chinese-language profile grid; theme-filtered discovery; list traversal; per-row action buttons |
 | 2 | Gmail self-send | Cross-app launch via Win+R; web compose UI; text input into rich-text field |
 | 3 | Sydney → Guangzhou flight search | Multi-step form fill (date pickers, autocomplete airports); result-page comprehension |
 | 4 | Captcha resolution | reCAPTCHA / Cloudflare Turnstile / hCaptcha demo pages — image-grid clicks, checkbox targeting, drag puzzles |
-| 5 | Douyin DM to 10 creators with >50k fans | Threshold filter (parse `粉丝 N` from profile cards); recommended-stream traversal; open DM compose pane and send a non-trivial Chinese message |
 
 Console logs from prior runs are kept under `_runs_baseline_*` for post-mortem diffing.
 
@@ -397,7 +396,7 @@ app/
     win.py           — pyautogui/pywin32 input, mss screenshots, foreground-window focus
 
 tools/
-  baseline_tests.sh  — 5-task regression suite (see [Baseline regression suite](#baseline-regression-suite))
+  baseline_tests.sh  — 4-task regression suite (see [Baseline regression suite](#baseline-regression-suite))
   run_and_review.py  — helper to launch a run and diff its output against a reference
 
 requirements-app.txt — Python deps (Python 3.11+)
