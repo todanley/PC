@@ -38,7 +38,11 @@ import threading
 # Tunables (env-overridable so the operator can dial precision/recall in the
 # field without a rebuild).
 _OCR_MIN_CONF = float(os.environ.get("PHANTOM_SOM_OCR_CONF", "0.45"))
-_MAX_MARKS = int(os.environ.get("PHANTOM_SOM_MAX_MARKS", "120"))
+# Bumped from 120 to 250 to leave room after the UIA cap grew to 200.
+# UIA → text → icons share this budget; previously UIA at 80 fit comfortably
+# below the 120 ceiling, now UIA alone could consume 200 so text/icons need
+# a wider ceiling to still land in the mark set.
+_MAX_MARKS = int(os.environ.get("PHANTOM_SOM_MAX_MARKS", "250"))
 # Icon proposals are noisier than OCR (contours fire on any textured
 # background — game scenes, photos, video frames), so they get their own
 # smaller budget and are only added AFTER all text marks. Set
@@ -71,8 +75,14 @@ _DEDUP_DIST = int(os.environ.get("PHANTOM_SOM_DEDUP_PX", "22"))
 # the panel. Primary action buttons were silently dropped as a consequence.
 # Bumped to 120 elements / 2 s to let the full comment-panel path surface.
 _UIA_ENABLED = os.environ.get("PHANTOM_SOM_UIA", "1") == "1"
-_UIA_MAX = int(os.environ.get("PHANTOM_SOM_UIA_MAX", "120"))
-_UIA_BUDGET_S = float(os.environ.get("PHANTOM_SOM_UIA_BUDGET", "2.0"))
+# Direct-hwnd probe against a live Douyin video+comment-panel showed the full
+# page a11y tree has ~285 interactive elements. The red ↑ comment-post button
+# IS in the tree (at approx (3801, 1514), 36x36 with ControlType 50026), but
+# only gets picked up when the UIA pass has enough budget to reach the bottom
+# of the comment panel. 120 el / 2 s was too tight on dense Douyin DOMs;
+# bumped to 200 el / 3 s so the comment-input row is reliably walked.
+_UIA_MAX = int(os.environ.get("PHANTOM_SOM_UIA_MAX", "200"))
+_UIA_BUDGET_S = float(os.environ.get("PHANTOM_SOM_UIA_BUDGET", "3.0"))
 _UIA_MAX_DEPTH = int(os.environ.get("PHANTOM_SOM_UIA_DEPTH", "25"))
 
 
