@@ -61,11 +61,18 @@ def _launch_chrome(profile_dir: str, url: str) -> subprocess.Popen | None:
     args = [chrome]
     if profile_dir:
         args.append(f"--profile-directory={profile_dir}")
-    # Build Chrome's full renderer accessibility tree eagerly so the SoM UIA
+    # Build Chrome's FULL renderer accessibility tree eagerly so the SoM UIA
     # source (PHANTOM_SOM_UIA) sees page elements from turn 1, instead of a
     # thin browser-chrome-only tree that fills in a turn or two later.
     # Harness-only — a reason this isn't baked into the shipped app yet.
-    args.append("--force-renderer-accessibility")
+    #
+    # =complete is important: without the explicit mode, Chromium defaults to
+    # "basic" accessibility which omits div-with-role=button and other common
+    # web-button patterns from the a11y tree. Observed consequence: Douyin's
+    # red ↑ comment-post button (a role=button div with no visible text label)
+    # didn't surface as a UIA element at all, SoM therefore couldn't mark it,
+    # and the agent clicked an adjacent @-mention element instead.
+    args.append("--force-renderer-accessibility=complete")
     args.append("--new-window")
     if url:
         args.append(url)

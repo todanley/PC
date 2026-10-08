@@ -92,9 +92,15 @@ _DEDUP_DIST = int(os.environ.get("PHANTOM_SOM_DEDUP_PX", "22"))
 # tiny "···" more-button, or a desktop app icon to launch). Boxes come back in
 # screen coords == screenshot-pixel space. ON by default (set PHANTOM_SOM_UIA=0
 # to disable). Windows-only; lazy-loaded; degrades to [] if comtypes absent.
+#
+# Budget tuning: the previous 80-element / 1 s budget filled up on Douyin's
+# comment-panel enumeration (20+ comments × 5–8 sub-elements each) before the
+# traversal reached the comment input + its send button at the right edge of
+# the panel. Primary action buttons were silently dropped as a consequence.
+# Bumped to 120 elements / 2 s to let the full comment-panel path surface.
 _UIA_ENABLED = os.environ.get("PHANTOM_SOM_UIA", "1") == "1"
-_UIA_MAX = int(os.environ.get("PHANTOM_SOM_UIA_MAX", "80"))
-_UIA_BUDGET_S = float(os.environ.get("PHANTOM_SOM_UIA_BUDGET", "1.0"))
+_UIA_MAX = int(os.environ.get("PHANTOM_SOM_UIA_MAX", "120"))
+_UIA_BUDGET_S = float(os.environ.get("PHANTOM_SOM_UIA_BUDGET", "2.0"))
 _UIA_MAX_DEPTH = int(os.environ.get("PHANTOM_SOM_UIA_DEPTH", "25"))
 
 
