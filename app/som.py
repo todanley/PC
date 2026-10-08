@@ -39,6 +39,34 @@ import threading
 # field without a rebuild).
 _OCR_MIN_CONF = float(os.environ.get("PHANTOM_SOM_OCR_CONF", "0.45"))
 _MAX_MARKS = int(os.environ.get("PHANTOM_SOM_MAX_MARKS", "120"))
+# Short action-button labels (发送 / OK / 提交 / 关注 / Send …) often sit below
+# the default OCR confidence floor because the glyphs are small and sit on
+# saturated colored backgrounds that confuse PP-OCR more than larger body text.
+# Catch those at a lower bar: for text up to _SHORT_TEXT_LEN chars, accept down
+# to _SHORT_TEXT_MIN_CONF; for text that matches a known action-button keyword
+# accept down to _BUTTON_MIN_CONF regardless of length. Primary-action buttons
+# are the whole point of SoM; missing them silently (the Douyin 发送 button
+# dropped out of the mark set and the agent clicked an adjacent @-mention
+# instead) is a bug, not a tradeoff.
+_SHORT_TEXT_LEN = int(os.environ.get("PHANTOM_SOM_SHORT_TEXT_LEN", "6"))
+_SHORT_TEXT_MIN_CONF = float(os.environ.get("PHANTOM_SOM_SHORT_TEXT_CONF", "0.30"))
+_BUTTON_MIN_CONF = float(os.environ.get("PHANTOM_SOM_BUTTON_CONF", "0.20"))
+_BUTTON_KEYWORDS = frozenset([
+    # Chinese action-button labels
+    "发送", "发布", "发表", "提交", "确定", "确认", "取消",
+    "关注", "已关注", "取消关注", "取关", "拉黑", "回复", "评论",
+    "点赞", "收藏", "分享", "转发", "下载", "保存", "搜索",
+    "登录", "注册", "退出", "完成", "下一步", "返回", "更多",
+    "编辑", "删除", "添加", "新建", "上传", "打开", "关闭",
+    "开始", "停止", "暂停", "继续", "跳过", "重试", "刷新",
+    # English common actions
+    "send", "submit", "post", "ok", "cancel", "save", "delete",
+    "follow", "unfollow", "following", "like", "share", "comment", "reply",
+    "search", "sign in", "login", "log in", "logout", "sign up",
+    "next", "back", "done", "yes", "no", "confirm", "continue",
+    "open", "close", "edit", "add", "new", "upload", "download",
+    "start", "stop", "pause", "skip", "retry", "refresh",
+])
 # Icon proposals are noisier than OCR (contours fire on any textured
 # background — game scenes, photos, video frames), so they get their own
 # smaller budget and are only added AFTER all text marks. Set
@@ -144,13 +172,31 @@ class SetOfMarkEngine:
                 quad, text, conf = item[0], item[1], float(item[2])
             except (IndexError, TypeError, ValueError):
                 continue
-            if conf < _OCR_MIN_CONF:
+            text_stripped = str(text).strip()
+            # Three-tier confidence floor so critical action buttons aren't
+            # silently dropped when their small colored glyphs produce lower
+            # OCR confidence than normal body text:
+            #   1. Known action-button keyword → _BUTTON_MIN_CONF (lowest).
+            #   2. Short text (<= _SHORT_TEXT_LEN chars, likely a button
+            #      label) → _SHORT_TEXT_MIN_CONF.
+            #   3. Everything else → _OCR_MIN_CONF (original default).
+            lower = text_stripped.lower()
+            if lower in _BUTTON_KEYWORDS or text_stripped in _BUTTON_KEYWORDS:
+                floor = _BUTTON_MIN_CONF
+                kind = "button"
+            elif len(text_stripped) <= _SHORT_TEXT_LEN:
+                floor = _SHORT_TEXT_MIN_CONF
+                kind = "text"
+            else:
+                floor = _OCR_MIN_CONF
+                kind = "text"
+            if conf < floor:
                 continue
             xs = [p[0] for p in quad]
             ys = [p[1] for p in quad]
             boxes.append(_Box(int(min(xs)), int(min(ys)),
                               int(max(xs)), int(max(ys)),
-                              label=str(text).strip(), kind="text"))
+                              label=text_stripped, kind=kind))
         return boxes
 
     def _detect_icons(self, image_bgr) -> list:
@@ -302,9 +348,19 @@ class SetOfMarkEngine:
             filtered_uia.append(u)
         uia_kept = self._dedup_against(filtered_uia, [])[:_MAX_MARKS]
         used = uia_kept
-        text_kept = self._dedup_against(text_boxes, used)
-        text_kept = text_kept[:max(0, _MAX_MARKS - len(used))]
-        used = used + text_kept
+        # Text pass: run known-button-keyword text BEFORE other text so that
+        # when the mark budget runs tight, primary action buttons (发送 / OK /
+        # 提交 / 关注 / Send …) always survive the cap. Decorative body text
+        # loses first, which is almost always the right trade.
+        button_text = [b for b in text_boxes if b.kind == "button"]
+        other_text  = [b for b in text_boxes if b.kind != "button"]
+        button_kept = self._dedup_against(button_text, used)
+        button_kept = button_kept[:max(0, _MAX_MARKS - len(used))]
+        used = used + button_kept
+        other_kept = self._dedup_against(other_text, used)
+        other_kept = other_kept[:max(0, _MAX_MARKS - len(used))]
+        used = used + other_kept
+        text_kept = button_kept + other_kept
         budget = max(0, _MAX_MARKS - len(used))
         icon_kept = self._dedup_against(icon_boxes, used)
         icon_kept = icon_kept[:min(budget, _MAX_ICONS)]
